@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SocksChain</string>
+    <string name="channel_vpn">VPN status</string>
+
+    <string name="status_stopped">Not connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_running">Connected through %1$s</string>
+    <string name="status_failed">Could not connect: %1$s</string>
+    <string name="status_failed_short">Failed</string>
+    <string name="status_blocked">Blocking all traffic: %1$s</string>
+    <string name="status_blocked_short">Blocking</string>
+    <string name="connect">Connect</string>
+    <string name="retry">Retry</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="action_stop">Stop</string>
+
+    <string name="protection_heading">On at boot, and nothing outside the VPN</string>
+    <string name="protection_unknown">Android reports these settings only while the VPN runs. Connect once to see them here.</string>
+    <string name="protection_off">Off. The VPN starts only when you start it, and traffic goes direct whenever it is down.</string>
+    <string name="protection_always_on">Always-on is set: the VPN starts at boot and restarts if it stops. Block connections without VPN is off, so traffic can go direct in the gap before it is up.</string>
+    <string name="protection_lockdown">Always-on and Block connections without VPN are both set. Nothing leaves this phone except through the chain, from boot, with or without a data connection.</string>
+    <string name="protection_how">In VPN settings, tap the gear next to SocksChain and turn on Always-on VPN, then Block connections without VPN.</string>
+    <string name="open_vpn_settings">Open VPN settings</string>
+    <string name="lockdown_cost_apps">With Block connections without VPN on, apps left out of the chain get no network at all.</string>
+    <string name="lockdown_cost_lan">With Block connections without VPN on, Android may block the local network this chain leaves out.</string>
+
+    <string name="new_chain">New chain</string>
+    <string name="no_chains">No chains yet. A chain is an ordered list of proxies your traffic passes through, one inside the next.</string>
+    <string name="edit">Edit</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="back">Back</string>
+    <string name="name">Name</string>
+
+    <string name="hops_heading">Hops</string>
+    <string name="hops_explainer">Traffic reaches each hop through the ones above it. The last hop is where it leaves for the internet.</string>
+    <string name="add_hop">Add hop</string>
+    <string name="add_tor">Add Tor</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="remove">Remove</string>
+    <string name="host">Host</string>
+    <string name="port">Port</string>
+    <string name="user">User</string>
+    <string name="user_id">User id</string>
+    <string name="password">Password</string>
+
+    <string name="tor_alone">Built-in Tor: three relays, then the internet. Sites see a Tor exit.</string>
+    <string name="tor_first">Built-in Tor. The hops below are reached through Tor, so they never see your address, and the last one is where you appear to be.</string>
+    <string name="tor_last">Built-in Tor, reached through the hops above: Tor itself connects through them, which helps where Tor is blocked. Sites see a Tor exit.</string>
+    <string name="tor_middle">Built-in Tor. Tor connects through the hops above; the hops below are reached through Tor.</string>
+    <string name="tor_starting">Tor: %1$d%% — %2$s</string>
+    <string name="tor_on">Tor: connected</string>
+    <string name="tor_failed">Tor: %1$s</string>
+
+    <string name="dns">DNS server</string>
+    <string name="dns_explainer">Asked over TCP from the last hop, so lookups follow the chain too.</string>
+    <string name="bypass_lan">Leave the local network out</string>
+    <string name="bypass_lan_explainer">Home devices, printers and the router stay reachable directly.</string>
+
+    <string name="apps_heading">Apps</string>
+    <string name="mode_all_except">All apps except those chosen</string>
+    <string name="mode_only">Only the apps chosen</string>
+    <string name="choose_apps">Choose apps (%1$d)</string>
+    <string name="search">Search</string>
+
+    <string name="scraper_title">Find free proxies</string>
+    <string name="scraper_warning">Free proxies are run by strangers. Some log what passes through, some are honeypots, and some are machines whose owners never meant to run one. Each result here has passed a TLS check, so it cannot read or change your HTTPS traffic, but it still sees where you connect. Put them after Tor, so they never see your address, and not in front of anything you log in to.</string>
+    <string name="scraper_via_tor">Scrape and test through Tor</string>
+    <string name="scraper_via_tor_explainer">List hosts and proxies see a Tor exit, not you. Slower, and times include Tor.</string>
+    <string name="scraper_want">Stop after %1$d working proxies</string>
+    <string name="scraper_start">Scrape and test</string>
+    <string name="scraper_sources">Sources (%1$d of %2$d)</string>
+    <string name="scraper_sources_title">Proxy list sources</string>
+    <string name="scraper_source_url">List URL (one ip:port per line)</string>
+    <string name="scraper_add_source">Add source</string>
+    <string name="scraper_preparing">Preparing…</string>
+    <string name="scraper_fetching">Downloading lists…</string>
+    <string name="scraper_progress">Tested %1$d of %2$d · %3$d working</string>
+    <string name="scraper_add">Add to a chain</string>
+    <string name="scraper_new_chain">New chain with this proxy</string>
+    <string name="scraper_append_to">Add to the end of “%1$s”</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="network_title">Network</string>
+    <string name="network_not_running">Connect to see traffic. Nothing is recorded while the VPN is off, and the record goes when it stops: it is only ever held in memory.</string>
+    <string name="upload">Up</string>
+    <string name="download">Down</string>
+    <string name="last_minute">last 60 s</string>
+    <string name="stat_open">open</string>
+    <string name="stat_blocked">blocked</string>
+    <string name="stat_udp">UDP dropped</string>
+    <string name="stat_total">up / down</string>
+    <string name="tab_connections">Connections</string>
+    <string name="tab_graph">Graph</string>
+    <string name="tab_dns">DNS</string>
+    <string name="tab_blocklist">Blocklist</string>
+    <string name="no_connections">No connections yet.</string>
+    <string name="no_lookups">No lookups yet.</string>
+    <string name="conn_open">open</string>
+    <string name="conn_closed">closed</string>
+    <string name="conn_failed">failed</string>
+    <string name="conn_blocked">Blocked</string>
+    <string name="graph_other">Other</string>
+    <string name="graph_unknown_app">Not identified (refused before Android could say)</string>
+    <string name="graph_explainer">Apps on the left, where they connect on the right; thicker lines carried more. Tap a destination to block it.</string>
+    <string name="blocklist_explainer">A domain blocks itself and every name under it; an IP or CIDR range blocks those addresses whatever name they came by. Domain blocks cannot catch apps that bring their own encrypted DNS; address blocks can.</string>
+    <string name="blocklist_entry">Domain, IP or range</string>
+    <string name="blocklist_invalid">Not a domain, IP address or CIDR range</string>
+    <string name="blocklist_empty">Nothing blocked.</string>
+    <string name="block">Block</string>
+    <string name="rule_domain">domain and everything under it</string>
+    <string name="rule_address">address</string>
+    <string name="rule_range">address range</string>
+    <string name="block_name">Block %1$s</string>
+    <string name="block_domain">Block all of %1$s</string>
+    <string name="block_ip">Block address %1$s</string>
+
+    <string name="test_chain">Test chain</string>
+    <string name="exit_ip">Leaves the chain as %1$s</string>
+</resources>

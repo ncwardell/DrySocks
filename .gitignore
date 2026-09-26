@@ -1,0 +1,20 @@
+.gradle/
+.gradle-home/
+result
+result-*
+build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Go: the module cache (GOPATH), the private gomobile install, and the built engine
+.go/
+engine/.bin/
+app/libs/
+
+# Claude Code agent worktrees and session state
+.claude/
