@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"sync/atomic"
@@ -159,5 +160,44 @@ func TestTunDNSAddressIsAnsweredHere(t *testing.T) {
 	}
 	if tunnels.Load() != 1 {
 		t.Errorf("%d tunnels, want 1", tunnels.Load())
+	}
+}
+
+func TestDNSOverHTTPSThroughTheChain(t *testing.T) {
+	// A DoH server that answers each query with itself reversed.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/dns-message" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		q, _ := io.ReadAll(r.Body)
+		for i, j := 0, len(q)-1; i < j; i, j = i+1, j-1 {
+			q[i], q[j] = q[j], q[i]
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		w.Write(q)
+	}))
+	defer srv.Close()
+
+	var tunnels atomic.Int32
+	hop, _ := chain.ParseHop("http://" + countingProxy(t, &tunnels))
+	d := newDNSClient(&chain.Chain{Hops: []chain.Hop{hop}}, srv.URL+"/dns-query", nil)
+	// Trust the test server's certificate, as the system roots trust Cloudflare's.
+	d.doh.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
+	defer d.close()
+
+	for _, q := range []string{"abc", "hello"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		resp, err := d.exchange(ctx, []byte(q))
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resp) != len(q) || resp[0] != q[len(q)-1] {
+			t.Errorf("answer %q for %q", resp, q)
+		}
+	}
+	if n := tunnels.Load(); n != 1 {
+		t.Errorf("%d tunnels for two lookups, want 1: DoH should keep its connection", n)
 	}
 }

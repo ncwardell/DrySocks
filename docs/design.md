@@ -31,6 +31,21 @@ handshake before the handler runs (`core/tcp.go`, CreateEndpoint then HandleTCP)
 **The scraper's pass mark is a verified TLS handshake**, to Cloudflare's trace page, which
 also reports the exit address and country in the same response.
 
+**Rotation lives in the engine**, as `chain.Pool`, named so a hop URL (`rotate://id`) can
+refer to it and the app can refill it live. Resolution happens per dial, so open
+connections keep their proxy. A dial through a rotating hop gets per-attempt deadlines
+(6 s, three attempts) because dead free proxies hang rather than refuse; blame for a failed
+handshake goes to the rotating hop it involves, never to a fixed one.
+
+**Pools are the app's; rotation is the engine's.** A `ProxyPool` (saved, with per-proxy
+history) is copied into one engine pool per rotating hop, by hop id, so hops sharing a pool
+can still rotate differently. Checks reuse the scraper (`candidates` + `reportAll`), so a
+pool is judged exactly as scraped proxies are: a verified TLS handshake to Cloudflare.
+
+**DoH by default.** Found on Waydroid: rotating free proxies broke DNS, because many allow
+only 80/443 and plain DNS used TCP 53. DNS over HTTPS through the chain fixed it, and keeps
+the lookups from the hops.
+
 **`specialUse` foreground service.** `systemExempted` is meant for VPN apps but crashes on
 `startForeground` if the system does not yet consider the app the active VPN; `specialUse`
 cannot.
@@ -79,5 +94,7 @@ tunnel's DNS address; the engine now refuses that at once instead of sending it 
    and point Tor at them with ClientTransportPlugin … socks5 127.0.0.1:PORT.
 4. **UDP for single-hop chains** via SOCKS5 UDP ASSOCIATE.
 5. **Keystore-encrypted credentials.**
-6. Scraper: remember results, re-test saved free hops, drop dead ones from chains.
+6. Route fitness: before an update, test the route itself, and report why candidates fail
+   (a route that refuses non-web ports fails every candidate on 8080 or 1080); record per
+   proxy which ports it will tunnel to, so pools used as routes can be chosen for it.
 7. targetSdk 36/37, once tested; drag-and-drop hop order; profile import/export.

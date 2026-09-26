@@ -33,6 +33,13 @@ class ProfileStore(context: Context) {
         return all.firstOrNull { it.id == prefs[SELECTED] } ?: all.firstOrNull()
     }
 
+    /** Replaces every profile at once; for migrations. */
+    suspend fun replaceAll(all: List<Profile>) = store.edit { it[PROFILES] = encode(all) }
+
+    suspend fun all(): List<Profile> = decode(store.data.first()[PROFILES])
+
+    suspend fun get(id: String): Profile? = decode(store.data.first()[PROFILES]).firstOrNull { it.id == id }
+
     suspend fun save(profile: Profile) = store.edit { prefs ->
         val all = decode(prefs[PROFILES])
         val i = all.indexOfFirst { it.id == profile.id }
@@ -57,6 +64,7 @@ class ProfileStore(context: Context) {
 
         fun decode(s: String?): List<Profile> =
             if (s == null) emptyList() else runCatching { json.decodeFromString(serializer, s) }.getOrDefault(emptyList())
+                .map { if (it.dns == Profile.OLD_DEFAULT_DNS) it.copy(dns = Profile.DEFAULT_DNS) else it }
 
         fun encode(list: List<Profile>) = json.encodeToString(serializer, list)
     }

@@ -174,7 +174,7 @@ func TestCheckAllStopsAtWant(t *testing.T) {
 	var mu sync.Mutex
 	var found []Result
 	var last Progress
-	CheckAll(context.Background(), cands, nil, target(srv), 4, 3, 3*time.Second,
+	CheckAll(context.Background(), cands, nil, target(srv), CheckOpts{Workers: 4, Want: 3, PerCheck: 3 * time.Second},
 		func(r Result) { mu.Lock(); found = append(found, r); mu.Unlock() },
 		func(p Progress) { last = p })
 
@@ -203,4 +203,40 @@ func selfSigned(t *testing.T, name string) tls.Certificate {
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+func TestCheckAllFiltersAndReportsEverything(t *testing.T) {
+	srv := traceServer(t) // every proxy exits "in" NL
+	honest := socks5To(t, func(c net.Conn) { splice(c, srv.Listener.Addr().String()) })
+	dead := socks5To(t, func(c net.Conn) {})
+	cands := []Candidate{{URL: "socks5://" + honest}, {URL: "socks5://" + dead}}
+
+	var mu sync.Mutex
+	var got []Result
+	collect := func(r Result) { mu.Lock(); got = append(got, r); mu.Unlock() }
+
+	// Wanting only DE: the NL proxy is rejected, and with ReportAll both come back.
+	CheckAll(context.Background(), cands, nil, target(srv), CheckOpts{
+		Workers: 2, PerCheck: 3 * time.Second, ReportAll: true,
+		Accept: func(r Result) bool { return r.Country == "DE" },
+	}, collect, func(Progress) {})
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want both reported", len(got))
+	}
+	for _, r := range got {
+		if r.OK {
+			t.Errorf("%s passed a filter it should fail", r.URL)
+		}
+		if r.URL == "socks5://"+honest && r.Error != "filtered out" {
+			t.Errorf("honest proxy error %q, want filtered out", r.Error)
+		}
+	}
+
+	// Without ReportAll, only accepted proxies come back: here, none.
+	got = nil
+	CheckAll(context.Background(), cands, nil, target(srv), CheckOpts{Workers: 2, PerCheck: 3 * time.Second,
+		Accept: func(r Result) bool { return r.Country == "DE" }}, collect, func(Progress) {})
+	if len(got) != 0 {
+		t.Errorf("got %+v, want nothing", got)
+	}
 }

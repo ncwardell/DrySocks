@@ -62,11 +62,17 @@ object TorController {
      * returns its SOCKS port. [holder] names the caller, so one release does not stop
      * Tor under another.
      */
-    suspend fun start(context: Context, holder: String, before: List<Hop> = emptyList()): Int = lock.withLock {
+    /**
+     * With [adopt], a Tor already running is used as it is, whatever its upstream: for
+     * scrapes, which want *a* Tor and must not re-route the one the VPN is using.
+     */
+    suspend fun start(context: Context, holder: String, before: List<Hop> = emptyList(), adopt: Boolean = false): Int = lock.withLock {
         holders += holder
         val app = context.applicationContext
 
-        if (service == null) {
+        if (adopt && service != null) {
+            // Leave the upstream alone.
+        } else if (service == null) {
             upstream = before
             writeTorrc(app, upstreamLine(before))
             bind(app)

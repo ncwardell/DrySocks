@@ -119,14 +119,30 @@ type Progress struct {
 	Found  int `json:"found"`
 }
 
-// CheckAll tests candidates with workers in parallel, calling onResult for
-// every working one and onProgress after each, until all are tested, want
-// have worked (want <= 0: no limit), or ctx ends.
+// CheckOpts shape a CheckAll run.
+type CheckOpts struct {
+	Workers  int
+	Want     int // stop once this many are accepted; <= 0: test them all
+	PerCheck time.Duration
+	// Accept decides whether a working proxy counts (a country filter, say).
+	// Nil accepts every working one.
+	Accept func(Result) bool
+	// ReportAll passes failures and rejects to onResult too, for checking a
+	// pool's own proxies, where a failure is news.
+	ReportAll bool
+}
+
+// CheckAll tests candidates in parallel, calling onResult for every accepted
+// one (every one, with ReportAll) and onProgress after each, until all are
+// tested, Want are accepted, or ctx ends.
 func CheckAll(
-	ctx context.Context, candidates []Candidate, via []chain.Hop, t Target,
-	workers, want int, perCheck time.Duration,
+	ctx context.Context, candidates []Candidate, via []chain.Hop, t Target, o CheckOpts,
 	onResult func(Result), onProgress func(Progress),
 ) {
+	workers, want, perCheck := o.Workers, o.Want, o.PerCheck
+	if perCheck <= 0 {
+		perCheck = 10 * time.Second
+	}
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 
@@ -149,12 +165,18 @@ func CheckAll(
 
 				report.Lock()
 				n := tested.Add(1)
+				if r.OK && o.Accept != nil && !o.Accept(r) {
+					r.OK = false
+					r.Error = "filtered out"
+				}
 				if r.OK {
 					f := found.Add(1)
 					onResult(r)
 					if want > 0 && int(f) >= want {
 						stop()
 					}
+				} else if o.ReportAll {
+					onResult(r)
 				}
 				onProgress(Progress{Tested: int(n), Total: len(candidates), Found: int(found.Load())})
 				report.Unlock()

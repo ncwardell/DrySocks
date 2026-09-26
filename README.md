@@ -76,12 +76,52 @@ a proxy that intercepts TLS fails. The same request returns the address and coun
 leaves from, which is not always its own (backconnect pools). Passing proxies can be added to
 the end of any chain, or start a new one.
 
-By default the lists are fetched and every candidate dialled **through Tor**, so neither the
-list hosts nor the proxies — some of them run to harvest exactly this — see the phone.
+Scrapes run **through any route**: directly, through Tor, or through any saved chain —
+by default the chain selected on Home, the one known to reach the internet here. Through
+anything but directly, neither the list hosts nor the proxies — some of them run to harvest
+exactly this — see the phone.
 
 Free proxies are strangers' machines: some log, some are honeypots, some are hijacked. The
 TLS check means they cannot read or alter HTTPS, but they see where you connect. Put them
 after Tor. `go test -tags live -v -run Live ./scrape` runs the real thing from a desktop.
+
+## Pools and the rotating hop
+
+A **pool** (the layers icon on Home) is a saved list of proxies, with what the app knows of
+each: when it last passed a check, latency, exit address and country, and failed checks in a
+row. Rotating hops draw from a pool; several can share one.
+
+Fill a pool by pasting a list, from the scraper ("Add all to a pool"), or let it keep itself
+fresh. An **update** checks the proxies it has (enough failures in a row and a proxy is
+dropped) and, if fewer than the target work, scrapes for more, with optional protocol and
+exit-country filters. Updates are **Manual** or **Automatic** (on a schedule while
+connected, and at once when running low), and automatic ones can also run **in the
+background** while disconnected. Every pool updates through a route of its own: directly,
+Tor, any chain — including one rotating over a different pool. **Pause** stops a pool's
+automatic updates and the engine's health checks of it.
+
+A **rotating hop** moves through its pool in one of three ways:
+
+- **Sequential** — stays on a proxy, and moves to the next in order only when it fails.
+- **Auto** — a random proxy every *N* seconds.
+- **Scattered** — every new connection gets a random proxy.
+
+Open connections always keep the proxy they started on. Free proxies die constantly, so
+the engine also health-checks a pool from where its hop sits in the chain (at start and
+every two minutes, unless paused), benches the dead for five minutes, and retries a failed
+connection on the next proxy, up to three attempts of 6 s.
+
+Test proxies from where they will be used. Measured on Waydroid: of 16 proxies a pool had
+just rated working, only 4 could open tunnels to ports 443, 8080 and 1080 alike, and 5 no
+longer reached even 443. So a route made of free proxies is a poor one for testing other
+free proxies: most candidates fail at the route, not on their merits.
+
+## DNS over HTTPS
+
+DNS follows the chain to the resolver the chain names — by default
+`https://1.1.1.1/dns-query`, DNS over HTTPS. It needs only port 443, which nearly every
+proxy allows (many free ones refuse 53), and the hops cannot read or alter the lookups.
+`host:port` still gives plain DNS over TCP.
 
 ## Network view
 

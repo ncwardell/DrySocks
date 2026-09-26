@@ -1,12 +1,16 @@
 package vpn
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,15 +26,54 @@ type dnsClient struct {
 	server string
 	idle   chan net.Conn
 	mon    *monitor.Monitor
+	// doh is set when server is an https:// URL: DNS over HTTPS (RFC 8484).
+	// Proxies that allow nothing but web ports still carry it, and it is
+	// encrypted end to end, so the hops cannot read or alter the lookups.
+	doh *http.Client
 }
 
-const dnsTimeout = 8 * time.Second
+// Room for two dial attempts through a rotating hop (see chain.attemptTimeout),
+// still inside the ~15 s Android's resolver waits before giving up.
+const dnsTimeout = 15 * time.Second
 
 func newDNSClient(c *chain.Chain, server string, mon *monitor.Monitor) *dnsClient {
 	if mon == nil {
 		mon = monitor.New(nil)
 	}
-	return &dnsClient{chain: c, server: server, idle: make(chan net.Conn, 4), mon: mon}
+	d := &dnsClient{chain: c, server: server, idle: make(chan net.Conn, 4), mon: mon}
+	if strings.HasPrefix(server, "https://") {
+		d.doh = &http.Client{
+			Timeout: dnsTimeout,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+					return c.DialContext(ctx, addr)
+				},
+				ForceAttemptHTTP2:   true, // one tunnel, many lookups
+				MaxIdleConnsPerHost: 2,
+				IdleConnTimeout:     90 * time.Second,
+				TLSHandshakeTimeout: dnsTimeout,
+			},
+		}
+	}
+	return d
+}
+
+func (d *dnsClient) exchangeDoH(ctx context.Context, query []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.server, bytes.NewReader(query))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+	resp, err := d.doh.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DNS over HTTPS: %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 }
 
 // resolve is what both DNS paths call: the blocklist, the log, then upstream.
@@ -71,6 +114,9 @@ func (d *dnsClient) serveTCP() net.Conn {
 }
 
 func (d *dnsClient) exchange(ctx context.Context, query []byte) ([]byte, error) {
+	if d.doh != nil {
+		return d.exchangeDoH(ctx, query)
+	}
 	// A pooled tunnel may have been closed by the server while it sat idle, so
 	// a failure on one earns exactly one retry on a fresh tunnel.
 	select {
@@ -115,6 +161,9 @@ func (d *dnsClient) roundTrip(conn net.Conn, query []byte) ([]byte, error) {
 }
 
 func (d *dnsClient) close() {
+	if d.doh != nil {
+		d.doh.CloseIdleConnections()
+	}
 	for {
 		select {
 		case c := <-d.idle:

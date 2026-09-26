@@ -16,6 +16,34 @@ enum class HopKind(val scheme: String, val label: String) {
      * (Socks5Proxy), so Tor can sit anywhere in the chain. See [Profile.engineHops].
      */
     TOR("socks5", "Tor"),
+
+    /**
+     * A pool of proxies used in turn: each new connection goes through the current one,
+     * and the pool moves on every [Hop.intervalSec]. Filled from a list, from the
+     * scraper in the background, or both. See engine/chain/pool.go.
+     */
+    ROTATING("rotate", "Rotating"),
+}
+
+/** How a rotating hop moves through its pool. */
+@Serializable
+enum class RotationMode(val engine: String) {
+    /** Stays on one proxy; moves to the next in the pool's order only when it fails. */
+    SEQUENTIAL("sequential"),
+
+    /** A random proxy every [Hop.intervalSec] seconds. */
+    AUTO("timed"),
+
+    /** Every new connection gets a random proxy. */
+    SCATTERED("scattered"),
+}
+
+/** How a scrape reaches the lists and the proxies it tests. */
+object ScrapeVia {
+    const val DIRECT = "direct"
+    const val TOR = "tor"
+    fun chain(profileId: String) = "chain:$profileId"
+    fun chainId(via: String): String? = via.removePrefix("chain:").takeIf { via.startsWith("chain:") }
 }
 
 /** One proxy in a chain. Traffic reaches it through every hop listed before it. */
@@ -26,10 +54,24 @@ data class Hop(
     val port: Int = 1080,
     val user: String = "",
     val pass: String = "",
+    /** Rotating only: names the engine's copy of the pool, so it must stay put when hops move. */
+    val id: String = "",
+    /** Rotating only: the [ProxyPool] it draws from. Several hops may share one. */
+    val poolId: String = "",
+    val rotation: RotationMode = RotationMode.AUTO,
+    /** [RotationMode.AUTO] only. */
+    val intervalSec: Int = 60,
+    /** Before rotation modes; ignored. */
+    val shuffle: Boolean = true,
+    /** Before pools: the hop's own list and refill. Read once by [migrateRotatingHops]. */
+    val pool: List<String> = emptyList(),
+    val refill: Boolean = false,
+    val refillVia: String = ScrapeVia.DIRECT,
 ) {
     /** The URL the engine parses; see engine/chain/hop.go. */
     fun toUrl(): String {
         check(kind != HopKind.TOR) { "Tor's address is only known at run time; use Profile.engineHops" }
+        if (kind == HopKind.ROTATING) return "rotate://$id"
         val auth = when {
             user.isEmpty() -> ""
             pass.isEmpty() -> "${enc(user)}@"
@@ -42,6 +84,12 @@ data class Hop(
     /** Null when usable, otherwise what is wrong, phrased for the editor. */
     fun problem(): String? = when {
         kind == HopKind.TOR -> null
+        kind == HopKind.ROTATING -> when {
+            id.isBlank() -> "Rotating hop has no id; remove and add it again"
+            poolId.isBlank() -> "Choose a pool for the rotating hop"
+            rotation == RotationMode.AUTO && intervalSec !in 1..86_400 -> "Rotate every 1 second to 24 hours"
+            else -> null
+        }
         host.isBlank() -> "Host is empty"
         host.any { it.isWhitespace() || it in "/@[]" } -> "Host has characters a host name cannot"
         port !in 1..65535 -> "Port must be 1–65535"
@@ -54,10 +102,16 @@ data class Hop(
 
     /** True when the host is this phone, which only the first hop can reach. */
     val isLoopback: Boolean
-        get() = kind != HopKind.TOR && (host == "localhost" || host == "::1" || host.startsWith("127."))
+        get() = kind != HopKind.TOR && kind != HopKind.ROTATING &&
+            (host == "localhost" || host == "::1" || host.startsWith("127."))
 
     companion object {
         fun tor() = Hop(HopKind.TOR, host = "", port = 0)
+
+        fun rotating(poolId: String = "") = Hop(
+            HopKind.ROTATING, host = "", port = 0,
+            id = java.util.UUID.randomUUID().toString().take(12), poolId = poolId,
+        )
 
         /** Reads what the scraper returns: scheme://host:port, no credentials. */
         fun fromUrl(url: String): Hop? {
@@ -82,8 +136,12 @@ data class Profile(
     val id: String,
     val name: String = "New chain",
     val hops: List<Hop> = listOf(Hop()),
-    /** Resolver the exit hop reaches, over TCP. */
-    val dns: String = "1.1.1.1:53",
+    /**
+     * Resolver the exit hop reaches: an https:// URL for DNS over HTTPS, or host:port
+     * for DNS over TCP. HTTPS is the default because it needs only port 443, which
+     * nearly every proxy allows, and the hops cannot read the lookups.
+     */
+    val dns: String = DEFAULT_DNS,
     val appMode: AppMode = AppMode.ALL_EXCEPT,
     val apps: Set<String> = emptySet(),
     /** Leave private ranges (home network, printers, the router) off the VPN. */
@@ -97,14 +155,27 @@ data class Profile(
         hops.drop(1).forEachIndexed { i, h ->
             if (h.isLoopback) return "Hop ${i + 2}: only the first hop can be on this phone"
         }
-        if (!dns.matches(Regex("""^(\[[0-9a-fA-F:]+]|[^:\s]+):\d{1,5}$"""))) {
-            return "DNS must be host:port, e.g. 1.1.1.1:53"
+        if (!dns.matches(Regex("""^(\[[0-9a-fA-F:]+]|[^:\s/]+):\d{1,5}$""")) &&
+            !dns.matches(Regex("""^https://[^\s/]+(/\S*)?$"""))
+        ) {
+            return "DNS must be an https:// URL or host:port, e.g. $DEFAULT_DNS"
         }
         if (appMode == AppMode.ONLY && apps.isEmpty()) return "Pick at least one app, or route all apps"
         return null
     }
 
+    companion object {
+        const val DEFAULT_DNS = "https://1.1.1.1/dns-query"
+
+        /** Before DNS over HTTPS existed this was the default; chains still on it move up. */
+        const val OLD_DEFAULT_DNS = "1.1.1.1:53"
+    }
+
     val usesTor: Boolean get() = hops.any { it.kind == HopKind.TOR }
+
+    val rotatingHops: List<Hop> get() = hops.filter { it.kind == HopKind.ROTATING }
+
+    val poolIds: Set<String> get() = rotatingHops.map { it.poolId }.filter { it.isNotEmpty() }.toSet()
 
     /** Hops Tor itself connects through: its upstream, served by the engine. */
     val hopsBeforeTor: List<Hop>

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -58,6 +59,7 @@ private sealed interface Screen {
     data class Edit(val profile: Profile) : Screen
     data object Scraper : Screen
     data object Network : Screen
+    data object Pools : Screen
 }
 
 @Composable
@@ -72,7 +74,12 @@ fun SocksChainApp(vm: MainViewModel, onConnect: () -> Unit, onDisconnect: () -> 
             onEdit = { vm.clearProbe(); screen = Screen.Edit(it) },
             onScraper = { screen = Screen.Scraper },
             onNetwork = { screen = Screen.Network },
+            onPools = { screen = Screen.Pools },
         )
+        Screen.Pools -> {
+            BackHandler { screen = Screen.Home }
+            PoolsScreen(vm, onDone = { screen = Screen.Home })
+        }
         Screen.Network -> {
             BackHandler { screen = Screen.Home }
             NetworkScreen(vm, onDone = { screen = Screen.Home })
@@ -102,6 +109,7 @@ private fun HomeScreen(
     onEdit: (Profile) -> Unit,
     onScraper: () -> Unit,
     onNetwork: () -> Unit,
+    onPools: () -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val selectedId by vm.selectedId.collectAsStateWithLifecycle()
@@ -115,6 +123,9 @@ private fun HomeScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
+                    IconButton(onClick = onPools) {
+                        Icon(Icons.Default.Layers, stringResource(R.string.pools_title))
+                    }
                     IconButton(onClick = onNetwork) {
                         Icon(Icons.Default.Hub, stringResource(R.string.network_title))
                     }
@@ -277,6 +288,6 @@ private fun lockdownCosts(p: Profile): List<Int> = buildList {
 }
 
 fun chainSummary(p: Profile): String = p.hops.joinToString(" → ") {
-    if (it.kind == HopKind.TOR) "Tor" else "${it.kind.label} ${it.host}:${it.port}"
+    if (it.kind == HopKind.TOR) "Tor" else if (it.kind == HopKind.ROTATING) "Rotating" else "${it.kind.label} ${it.host}:${it.port}"
 } + " → internet"
 

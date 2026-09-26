@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -29,7 +30,8 @@ import (
 // Config is what the app sends across, as JSON.
 type Config struct {
 	Hops []string `json:"hops"`
-	// DNS is the resolver queries are sent to, reached from the last hop.
+	// DNS is the resolver queries are sent to, reached from the last hop:
+	// host:port for DNS over TCP, or an https:// URL for DNS over HTTPS.
 	DNS string `json:"dns"`
 	MTU int    `json:"mtu"`
 	// TunDNS is the DNS address the VPN gives Android, inside the tunnel. It is
@@ -42,6 +44,7 @@ type Engine struct {
 	stack  *stack.Stack
 	tunnel *tunnel.Tunnel
 	dns    *dnsClient
+	stop   context.CancelFunc
 }
 
 // Start takes ownership of fd, the TUN descriptor from VpnService, and closes
@@ -65,8 +68,10 @@ func Start(fd int, cfg Config, mon *monitor.Monitor) (e *Engine, err error) {
 	if len(hops) == 0 {
 		return nil, errors.New("no hops configured")
 	}
-	if _, _, err := net.SplitHostPort(cfg.DNS); err != nil {
-		return nil, errors.New("dns: want host:port, got " + strconv.Quote(cfg.DNS))
+	if u, err := url.Parse(cfg.DNS); err == nil && u.Scheme == "https" && u.Host != "" {
+		// DNS over HTTPS
+	} else if _, _, err := net.SplitHostPort(cfg.DNS); err != nil {
+		return nil, errors.New("dns: want host:port or an https:// URL, got " + strconv.Quote(cfg.DNS))
 	}
 	mtu := cfg.MTU
 	if mtu == 0 {
@@ -101,10 +106,37 @@ func Start(fd int, cfg Config, mon *monitor.Monitor) (e *Engine, err error) {
 		dev.Close()
 		return nil, err
 	}
-	return &Engine{dev: dev, stack: st, tunnel: t, dns: p.dns}, nil
+	ctx, stop := context.WithCancel(context.Background())
+	go checkPools(ctx, hops)
+	return &Engine{dev: dev, stack: st, tunnel: t, dns: p.dns, stop: stop}, nil
 }
 
+// checkPools keeps rotating hops' pools honest while the engine runs: every
+// proxy is tried from where its hop sits in the chain, at start and then every
+// poolCheckEvery, and the dead ones are benched before traffic meets them.
+func checkPools(ctx context.Context, hops []chain.Hop) {
+	for {
+		for i, h := range hops {
+			if h.Kind == chain.Rotating && !h.Pool.Paused() {
+				h.Pool.Check(ctx, hops[:i], poolCheckTarget, 16, 6*time.Second)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(poolCheckEvery):
+		}
+	}
+}
+
+const (
+	poolCheckEvery = 2 * time.Minute
+	// Cloudflare's DNS on 443: always up, and on the port proxies allow.
+	poolCheckTarget = "1.1.1.1:443"
+)
+
 func (e *Engine) Stop() {
+	e.stop()
 	e.dev.Close()
 	e.stack.Close()
 	e.stack.Wait()

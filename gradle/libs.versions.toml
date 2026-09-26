@@ -9,6 +9,7 @@ activityCompose = "1.9.3"
 composeBom = "2024.12.01"
 datastore = "1.1.1"
 torAndroid = "0.4.9.12"
+work = "2.10.0"
 junit5 = "5.11.3"
 truth = "1.4.4"
 
@@ -31,6 +32,8 @@ androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 
 # Tor itself, built by the Guardian Project; the same build Orbot ships.
 tor-android = { module = "info.guardianproject:tor-android", version.ref = "torAndroid" }

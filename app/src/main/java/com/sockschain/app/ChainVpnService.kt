@@ -175,6 +175,9 @@ class ChainVpnService : VpnService() {
         // Before the engine starts, so nothing slips through while the app's copy of
         // the blocklist is still on its way.
         runCatching { BlockStore(this).push() }
+        // Rotating hops' pools, before anything dials through them (Tor's upstream too).
+        runCatching { PoolStore.migrate(this) }
+        runCatching { Pools.sync(this, profile) }
         profile.problem()?.let { return it }
         _status.value = VpnStatus.Connecting(profile.name)
 
@@ -206,6 +209,7 @@ class ChainVpnService : VpnService() {
             return e.message ?: e.toString()
         }
         engineUp = true
+        PoolUpdater.startAuto(this)
         _traffic.value = 0L to 0L
         baseline = Mobile.bytesUp() to Mobile.bytesDown()
         _status.value = VpnStatus.Running(profile.name)
@@ -268,6 +272,7 @@ class ChainVpnService : VpnService() {
     /** Call with [lock] held. */
     private fun teardown(final: VpnStatus) {
         ticker?.cancel()
+        PoolUpdater.stopAuto()
         if (engineUp) {
             Mobile.stop()
             engineUp = false

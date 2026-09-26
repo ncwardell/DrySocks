@@ -25,28 +25,99 @@ type Step struct {
 	Via  Hop
 	To   string
 	Took time.Duration
+
+	retry bool // marks the start of a retry, not a leg
 }
 
 // Probe dials like DialContext but also times every leg. On failure the steps
-// that did succeed are returned, which says which hop broke the chain.
+// that did succeed are returned, which says which hop broke the chain. Steps
+// name the proxy a rotating hop actually used.
 func (c *Chain) Probe(ctx context.Context, target string) (net.Conn, []Step, error) {
 	var steps []Step
-	conn, err := c.dial(ctx, target, func(s Step) { steps = append(steps, s) })
+	conn, err := c.dial(ctx, target, func(s Step) {
+		if s.retry {
+			steps = nil // the failed attempt's legs say nothing about this one
+			return
+		}
+		steps = append(steps, s)
+	})
 	return conn, steps, err
 }
 
+// A dead free proxy usually fails by hanging, not refusing. With a rotating hop
+// in the chain each attempt gets its own deadline, so a hang costs one attempt
+// rather than the whole dial, and the next proxy still has time.
+const (
+	attemptTimeout = 6 * time.Second // working free proxies answer in under 3
+	maxAttempts    = 3
+)
+
+// dial resolves rotating hops to their pools' current proxies and dials. If a
+// pool's proxy is to blame for a failure it is benched and the dial is tried
+// again, on the pool's next proxy, up to maxAttempts in all.
 func (c *Chain) dial(ctx context.Context, target string, onStep func(Step)) (net.Conn, error) {
 	if len(c.Hops) == 0 {
 		return nil, errNoHops
 	}
+	rotating := false
+	for _, h := range c.Hops {
+		rotating = rotating || h.Kind == Rotating
+	}
+	for attempt := 0; ; attempt++ {
+		hops := make([]Hop, len(c.Hops))
+		for i, h := range c.Hops {
+			if h.Kind != Rotating {
+				hops[i] = h
+				continue
+			}
+			cur, err := h.Pool.Current()
+			if err != nil {
+				return nil, err
+			}
+			hops[i] = cur
+		}
 
+		actx, cancel := ctx, context.CancelFunc(func() {})
+		if rotating && attempt < maxAttempts-1 {
+			actx, cancel = context.WithTimeout(ctx, attemptTimeout)
+		}
+		conn, failedAt, err := c.dialOnce(actx, hops, target, onStep)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+		blame := -1
+		switch {
+		case failedAt < 0:
+			blame = 0 // the TCP connect to the first hop
+		case c.Hops[failedAt].Kind == Rotating:
+			blame = failedAt
+		case failedAt+1 < len(c.Hops) && c.Hops[failedAt+1].Kind == Rotating:
+			blame = failedAt + 1 // the hop before could not reach it
+		}
+		if blame < 0 || c.Hops[blame].Kind != Rotating {
+			return nil, err
+		}
+		c.Hops[blame].Pool.Failed(hops[blame].Addr)
+		if attempt >= maxAttempts-1 || ctx.Err() != nil {
+			return nil, err
+		}
+		if onStep != nil {
+			onStep(Step{retry: true})
+		}
+	}
+}
+
+// dialOnce dials through concrete hops. failedAt is the hop whose handshake
+// failed, or -1 if the connect to the first hop did.
+func (c *Chain) dialOnce(ctx context.Context, hops []Hop, target string, onStep func(Step)) (net.Conn, int, error) {
 	start := time.Now()
-	conn, err := c.Dialer.DialContext(ctx, "tcp", c.Hops[0].Addr)
+	conn, err := c.Dialer.DialContext(ctx, "tcp", hops[0].Addr)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	if onStep != nil {
-		onStep(Step{To: c.Hops[0].Addr, Took: time.Since(start)})
+		onStep(Step{To: hops[0].Addr, Took: time.Since(start)})
 	}
 
 	// Handshakes are plain blocking reads; tie them to ctx by moving the
@@ -57,10 +128,10 @@ func (c *Chain) dial(ctx context.Context, target string, onStep func(Step)) (net
 	raw := conn // conn is rewrapped below; the callback must not race that
 	stop := context.AfterFunc(ctx, func() { raw.SetDeadline(time.Unix(1, 0)) })
 
-	for i, h := range c.Hops {
+	for i, h := range hops {
 		next := target
-		if i+1 < len(c.Hops) {
-			next = c.Hops[i+1].Addr
+		if i+1 < len(hops) {
+			next = hops[i+1].Addr
 		}
 		start = time.Now()
 		tunneled, err := h.connect(conn, next)
@@ -70,7 +141,7 @@ func (c *Chain) dial(ctx context.Context, target string, onStep func(Step)) (net
 			if ctx.Err() != nil {
 				err = ctx.Err()
 			}
-			return nil, err
+			return nil, i, err
 		}
 		conn = tunneled
 		if onStep != nil {
@@ -82,8 +153,8 @@ func (c *Chain) dial(ctx context.Context, target string, onStep func(Step)) (net
 		// ctx ended after the last handshake, so the deadline is already in
 		// the past; the tunnel is useless.
 		conn.Close()
-		return nil, ctx.Err()
+		return nil, len(hops) - 1, ctx.Err()
 	}
 	conn.SetDeadline(time.Time{})
-	return conn, nil
+	return conn, 0, nil
 }

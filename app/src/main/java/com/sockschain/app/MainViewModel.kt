@@ -9,9 +9,11 @@ import androidx.lifecycle.viewModelScope
 import com.sockschain.core.Hop
 import com.sockschain.core.ScrapeResult
 import com.sockschain.core.ScrapeSource
+import com.sockschain.core.ScrapeVia
 import com.sockschain.core.scrapeConfig
 import com.sockschain.engine.mobile.ScrapeListener
 import com.sockschain.core.Profile
+import com.sockschain.core.ProxyPool
 import com.sockschain.core.ProbeResult
 import com.sockschain.engine.mobile.Mobile
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +38,7 @@ enum class ScrapePhase { Idle, Preparing, Fetching, Testing, Done }
 
 data class ScrapeState(
     val phase: ScrapePhase = ScrapePhase.Idle,
-    val viaTor: Boolean = false,
+    val via: String = ScrapeVia.DIRECT,
     val total: Int = 0,
     val tested: Int = 0,
     val found: List<ScrapeResult> = emptyList(),
@@ -48,6 +50,7 @@ data class ScrapeState(
 
 private const val PROBE_HOLDER = "probe"
 private const val SCRAPE_HOLDER = "scrape"
+private const val SCRAPE_SESSION = "user"
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ProfileStore(app)
@@ -78,6 +81,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val app = getApplication<Application>()
             val result = try {
+                Pools.sync(app, draft)
                 val torPort = if (draft.usesTor) {
                     TorController.start(app, PROBE_HOLDER, draft.hopsBeforeTor).also {
                         // A probe before Tor has a circuit only measures Tor's patience.
@@ -109,30 +113,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val scrape: StateFlow<ScrapeState> = _scrape.asStateFlow()
 
     /**
-     * Downloads the enabled lists and tests candidates until [want] pass. With [viaTor],
-     * lists are fetched and every candidate is dialled through Tor, so neither the list
-     * hosts nor the proxies, some of them run to collect exactly this, see the phone.
+     * Downloads the enabled lists and tests candidates until [want] pass, all through
+     * [via]: directly, through Tor, or through one of the saved chains. Through anything
+     * but directly, neither the list hosts nor the proxies, some of them run to collect
+     * exactly this, see the phone.
      */
-    fun startScrape(want: Int, viaTor: Boolean) {
+    fun startScrape(want: Int, via: String) {
         val app = getApplication<Application>()
-        _scrape.value = ScrapeState(phase = ScrapePhase.Preparing, viaTor = viaTor)
+        _scrape.value = ScrapeState(phase = ScrapePhase.Preparing, via = via)
         viewModelScope.launch {
-            val via = if (viaTor) {
-                try {
-                    val port = TorController.start(app, SCRAPE_HOLDER)
-                    if (!TorController.awaitCircuit()) error("Tor did not build a circuit within two minutes")
-                    listOf("socks5://127.0.0.1:$port")
-                } catch (e: Exception) {
-                    TorController.release(app, SCRAPE_HOLDER)
-                    _scrape.value = _scrape.value.copy(phase = ScrapePhase.Done, error = e.message)
-                    return@launch
-                }
-            } else {
-                emptyList()
+            val hops = try {
+                Via.resolve(app, via, SCRAPE_HOLDER)
+            } catch (e: Exception) {
+                Via.release(app, SCRAPE_HOLDER)
+                _scrape.value = _scrape.value.copy(phase = ScrapePhase.Done, error = e.message)
+                return@launch
             }
             _scrape.value = _scrape.value.copy(phase = ScrapePhase.Fetching)
-            val cfg = scrapeConfig(sources.value, via, want)
-            Mobile.scrapeStart(cfg, object : ScrapeListener {
+            val cfg = scrapeConfig(sources.value, hops, want)
+            Mobile.scrapeStart(SCRAPE_SESSION, cfg, object : ScrapeListener {
                 override fun onFetched(candidates: Long, summaryJSON: String) {
                     _scrape.value = _scrape.value.copy(
                         phase = ScrapePhase.Testing, total = candidates.toInt(), summary = summaryJSON,
@@ -156,7 +155,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cancelScrape() = Mobile.scrapeCancel()
+    // --- Pools -------------------------------------------------------------------------
+
+    private val poolStore = PoolStore(app)
+    val pools: StateFlow<List<ProxyPool>> =
+        poolStore.pools.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    init {
+        viewModelScope.launch { PoolStore.migrate(app) }
+    }
+
+    /** Adds [urls] to the pool [poolId], or to a new pool called [newName]; returns its id. */
+    suspend fun addToPool(urls: List<String>, poolId: String?, newName: String = "Scraped proxies"): String {
+        val id = poolId ?: poolStore.create(newName).id
+        poolStore.update(id) { it.add(urls, System.currentTimeMillis()) }
+        return id
+    }
+
+    /** Scraper results arrive checked; keep what the check found rather than re-checking. */
+    fun addResultsToPool(results: List<ScrapeResult>, poolId: String?, newName: String = "Scraped proxies") =
+        viewModelScope.launch {
+            val id = poolId ?: poolStore.create(newName).id
+            poolStore.update(id) { it.merge(results, System.currentTimeMillis()) }
+        }
+
+    suspend fun newPool(name: String): ProxyPool = poolStore.create(name)
+    /**
+     * Saves a pool's name and settings only: its proxies may have changed under the
+     * screen, by an update running meanwhile, and must not be put back as they were.
+     */
+    fun savePoolSettings(p: ProxyPool) = viewModelScope.launch {
+        poolStore.update(p.id) { it.copy(name = p.name, update = p.update) }
+    }
+    fun deletePool(id: String) = viewModelScope.launch { poolStore.delete(id) }
+    fun updatePool(id: String, scrape: Boolean = true) = PoolUpdater.updateAsync(getApplication(), id, scrape)
+    fun cancelPoolUpdate(id: String) = PoolUpdater.cancel(id)
+    /** Pausing also stops an update in progress. */
+    fun setPaused(id: String, paused: Boolean) = viewModelScope.launch {
+        if (paused) PoolUpdater.cancel(id)
+        poolStore.update(id) { it.copy(paused = paused) }
+        PoolUpdater.resyncEngine(getApplication())
+    }
+
+    fun removeDead(id: String) = viewModelScope.launch { poolStore.update(id) { it.withoutDead() } }
+    fun removeProxy(id: String, url: String) = viewModelScope.launch {
+        poolStore.update(id) { p -> p.copy(proxies = p.proxies.filter { it.url != url }) }
+    }
+
+    fun cancelScrape() = Mobile.scrapeCancel(SCRAPE_SESSION)
 
     /** Appends [hop] to an existing chain, or starts a new one with it. */
     fun addHop(hop: Hop, toProfile: Profile?) = viewModelScope.launch {
@@ -166,7 +212,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        Mobile.scrapeCancel()
+        Mobile.scrapeCancel(SCRAPE_SESSION)
     }
 
     // --- Network view ------------------------------------------------------------------

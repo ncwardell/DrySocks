@@ -57,6 +57,10 @@ import com.sockschain.app.TorStatus
 import com.sockschain.core.Profile
 import com.sockschain.core.ScrapeResult
 import com.sockschain.core.ScrapeSource
+import com.sockschain.core.ScrapeVia
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,7 +71,11 @@ fun ScraperScreen(vm: MainViewModel, onDone: () -> Unit) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val tor by TorController.status.collectAsStateWithLifecycle()
 
-    var viaTor by rememberSaveable { mutableStateOf(true) }
+    val selectedId by vm.selectedId.collectAsStateWithLifecycle()
+    // The chain in use is the one known to reach the internet here; failing that, Tor.
+    var via by rememberSaveable { mutableStateOf<String?>(null) }
+    val viaNow = via ?: (selectedId ?: profiles.firstOrNull()?.id)?.let { ScrapeVia.chain(it) } ?: ScrapeVia.TOR
+    var addAllMenu by remember { mutableStateOf(false) }
     var want by rememberSaveable { mutableFloatStateOf(20f) }
     var editingSources by remember { mutableStateOf(false) }
 
@@ -101,13 +109,7 @@ fun ScraperScreen(vm: MainViewModel, onDone: () -> Unit) {
 
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.scraper_via_tor))
-                            Text(stringResource(R.string.scraper_via_tor_explainer), style = MaterialTheme.typography.bodySmall)
-                        }
-                        Switch(checked = viaTor, onCheckedChange = { viaTor = it }, enabled = !state.running)
-                    }
+                    ViaPicker(viaNow, profiles, enabled = !state.running, onPick = { via = it })
                     Text(stringResource(R.string.scraper_want, want.roundToInt()))
                     Slider(value = want, onValueChange = { want = it }, valueRange = 5f..100f, steps = 18, enabled = !state.running)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -115,7 +117,7 @@ fun ScraperScreen(vm: MainViewModel, onDone: () -> Unit) {
                             FilledTonalButton(onClick = vm::cancelScrape) { Text(stringResource(R.string.cancel)) }
                         } else {
                             Button(
-                                onClick = { vm.startScrape(want.roundToInt(), viaTor) },
+                                onClick = { vm.startScrape(want.roundToInt(), viaNow) },
                                 enabled = sources.any { it.enabled },
                             ) { Text(stringResource(R.string.scraper_start)) }
                         }
@@ -126,11 +128,71 @@ fun ScraperScreen(vm: MainViewModel, onDone: () -> Unit) {
                 }
             }
 
-            item { ScrapeProgress(state.phase, state.tested, state.total, state.found.size, tor, state.viaTor, state.error) }
+            item { ScrapeProgress(state.phase, state.tested, state.total, state.found.size, tor, state.via != ScrapeVia.DIRECT, state.error) }
+
+            if (state.found.isNotEmpty()) {
+                item {
+                    Box {
+                        OutlinedButton(onClick = { addAllMenu = true }) {
+                            Text(stringResource(R.string.scraper_add_all_pool, state.found.size))
+                        }
+                        DropdownMenu(expanded = addAllMenu, onDismissRequest = { addAllMenu = false }) {
+                            val pools by vm.pools.collectAsStateWithLifecycle()
+                            pools.forEach { p ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.scraper_to_pool, p.name)) },
+                                    onClick = { addAllMenu = false; vm.addResultsToPool(state.found, p.id) },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.scraper_new_pool)) },
+                                onClick = { addAllMenu = false; vm.addResultsToPool(state.found, null) },
+                            )
+                        }
+                    }
+                }
+            }
 
             items(state.found, key = { it.url }) { r -> ResultRow(r, profiles, onAdd = { p -> vm.addHop(r.hop!!, p) }) }
         }
     }
+}
+
+/** Direct, Tor, or any saved chain. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ViaPicker(via: String, profiles: List<Profile>, enabled: Boolean, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val label = viaLabel(via, profiles)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ExposedDropdownMenuBox(expanded = open, onExpandedChange = { if (enabled) open = it }) {
+            OutlinedTextField(
+                value = label, onValueChange = {}, readOnly = true, singleLine = true, enabled = enabled,
+                label = { Text(stringResource(R.string.scraper_via)) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+            )
+            ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                val options = listOf(ScrapeVia.DIRECT, ScrapeVia.TOR) + profiles.map { ScrapeVia.chain(it.id) }
+                options.forEach { o ->
+                    DropdownMenuItem(text = { Text(viaLabel(o, profiles)) }, onClick = { open = false; onPick(o) })
+                }
+            }
+        }
+        Text(
+            stringResource(if (via == ScrapeVia.DIRECT) R.string.scraper_via_direct_explainer else R.string.scraper_via_explainer),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (via == ScrapeVia.DIRECT) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+fun viaLabel(via: String, profiles: List<Profile>): String = when (via) {
+    ScrapeVia.DIRECT -> stringResource(R.string.via_direct)
+    ScrapeVia.TOR -> stringResource(R.string.via_tor)
+    else -> profiles.firstOrNull { it.id == ScrapeVia.chainId(via) }?.let { stringResource(R.string.via_chain, it.name) }
+        ?: stringResource(R.string.via_missing)
 }
 
 @Composable
@@ -140,7 +202,7 @@ private fun ScrapeProgress(
     total: Int,
     found: Int,
     tor: TorStatus,
-    viaTor: Boolean,
+    viaTor: Boolean, // any Tor involvement shows its progress while preparing
     error: String?,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

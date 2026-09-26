@@ -15,6 +15,8 @@ const (
 	SOCKS5 Kind = iota
 	SOCKS4      // SOCKS4a: the target may be a name, resolved by the proxy
 	HTTP        // HTTP CONNECT
+	// Rotating stands for its Pool's current proxy, resolved at each dial.
+	Rotating
 )
 
 func (k Kind) String() string {
@@ -25,6 +27,8 @@ func (k Kind) String() string {
 		return "socks4a"
 	case HTTP:
 		return "http"
+	case Rotating:
+		return "rotate"
 	}
 	return "unknown"
 }
@@ -35,16 +39,24 @@ type Hop struct {
 	Addr string // host:port; a name here is resolved by the hop before it
 	User string
 	Pass string
+	Pool *Pool // Rotating only
 }
 
 func (h Hop) String() string { return h.Kind.String() + "://" + h.Addr }
 
 // ParseHop reads a proxy URL: socks5://user:pass@host:port, socks4a://host:port
 // or http://user:pass@host:port. The port is required; guessing one hides typos.
+// rotate://name is a rotating hop over the pool of that name.
 func ParseHop(raw string) (Hop, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return Hop{}, fmt.Errorf("hop %q: %w", raw, err)
+	}
+	if u.Scheme == "rotate" {
+		if u.Host == "" {
+			return Hop{}, fmt.Errorf("hop %q: want rotate://name", raw)
+		}
+		return Hop{Kind: Rotating, Addr: u.Host, Pool: PoolNamed(u.Host)}, nil
 	}
 
 	var h Hop

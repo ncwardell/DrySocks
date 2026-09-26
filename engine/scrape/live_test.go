@@ -21,7 +21,7 @@ func TestLiveScrapeAndCheck(t *testing.T) {
 
 	start := time.Now()
 	var last Progress
-	CheckAll(ctx, res.Candidates, nil, DefaultTarget, 128, 8, 10*time.Second,
+	CheckAll(ctx, res.Candidates, nil, DefaultTarget, CheckOpts{Workers: 128, Want: 8, PerCheck: 10 * time.Second},
 		func(r Result) { t.Logf("OK %4d ms  %-2s  exit %-15s  %s", r.Ms, r.Country, r.ExitIP, r.URL) },
 		func(p Progress) { last = p })
 	t.Logf("tested %d of %d in %v, found %d", last.Tested, last.Total, time.Since(start).Round(time.Second), last.Found)

@@ -19,7 +19,7 @@ class ProfileTest {
             hops = listOf(Hop(HopKind.SOCKS5, "a", 1), Hop(HopKind.HTTP, "b", 2)),
         )
         assertThat(p.engineConfig(1500, tunDns = "198.18.0.2"))
-            .isEqualTo("""{"hops":["socks5://a:1","http://b:2"],"dns":"1.1.1.1:53","mtu":1500,"tunDns":"198.18.0.2"}""")
+            .isEqualTo("""{"hops":["socks5://a:1","http://b:2"],"dns":"https://1.1.1.1/dns-query","mtu":1500,"tunDns":"198.18.0.2"}""")
     }
 
     @Test
@@ -30,6 +30,8 @@ class ProfileTest {
             .contains("DNS")
         assertThat(Profile(id = "x", hops = listOf(Hop(host = "a")), dns = "[2606:4700::1111]:53").problem())
             .isNull()
+        assertThat(Profile(id = "x", hops = listOf(Hop(host = "a")), dns = "https://dns.example/q").problem()).isNull()
+        assertThat(Profile(id = "x", hops = listOf(Hop(host = "a")), dns = "http://dns.example/q").problem()).contains("DNS")
     }
 
     @Test
@@ -54,6 +56,39 @@ class ProfileTest {
         assertThat(Profile(id = "x", hops = listOf(Hop.tor(), Hop.tor())).problem()).contains("once")
         val p = Profile(id = "x", hops = listOf(Hop.tor()))
         assertThat(runCatching { p.engineHops(null) }.isFailure).isTrue()
+    }
+
+    @Test
+    fun `rotating hops go to the engine by their own id`() {
+        val r = Hop.rotating("pool-1")
+        val p = Profile(id = "x", hops = listOf(r, Hop.tor()))
+        assertThat(p.problem()).isNull()
+        assertThat(p.hopsBeforeTor.single().toUrl()).isEqualTo("rotate://${r.id}")
+        assertThat(p.poolIds).containsExactly("pool-1")
+        assertThat(Profile(id = "y", hops = listOf(Hop.rotating())).problem()).contains("pool")
+        assertThat(Profile(id = "y", hops = listOf(r.copy(intervalSec = 0))).problem()).contains("1 second")
+        // The interval only matters to AUTO.
+        assertThat(Profile(id = "y", hops = listOf(r.copy(rotation = RotationMode.SCATTERED, intervalSec = 0))).problem()).isNull()
+    }
+
+    @Test
+    fun `pasted proxy lists`() {
+        val text = """
+            # my list
+            1.2.3.4:1080
+            socks4://5.6.7.8:4145  US
+            http://user:pw@proxy.example:3128
+            socks5h://[2001:db8::1]:1080
+            not a proxy
+            1.2.3.4:1080
+            9.9.9.9:99999
+        """.trimIndent()
+        assertThat(parseProxyList(text)).containsExactly(
+            "socks5://1.2.3.4:1080",
+            "socks4a://5.6.7.8:4145",
+            "http://user:pw@proxy.example:3128",
+            "socks5://[2001:db8::1]:1080",
+        ).inOrder()
     }
 
     @Test

@@ -55,7 +55,7 @@
     <string name="tor_failed">Tor: %1$s</string>
 
     <string name="dns">DNS server</string>
-    <string name="dns_explainer">Asked over TCP from the last hop, so lookups follow the chain too.</string>
+    <string name="dns_explainer">Asked from the last hop, so lookups follow the chain. An https:// address (the default) is DNS over HTTPS: it needs only port 443, which almost every proxy allows, and no hop can read it. host:port is plain DNS over TCP.</string>
     <string name="bypass_lan">Leave the local network out</string>
     <string name="bypass_lan_explainer">Home devices, printers and the router stay reachable directly.</string>
 
@@ -67,8 +67,16 @@
 
     <string name="scraper_title">Find free proxies</string>
     <string name="scraper_warning">Free proxies are run by strangers. Some log what passes through, some are honeypots, and some are machines whose owners never meant to run one. Each result here has passed a TLS check, so it cannot read or change your HTTPS traffic, but it still sees where you connect. Put them after Tor, so they never see your address, and not in front of anything you log in to.</string>
-    <string name="scraper_via_tor">Scrape and test through Tor</string>
-    <string name="scraper_via_tor_explainer">List hosts and proxies see a Tor exit, not you. Slower, and times include Tor.</string>
+    <string name="scraper_via">Scrape and test through</string>
+    <string name="scraper_via_explainer">List hosts and the proxies see this route\'s exit, not you. Times include the route.</string>
+    <string name="scraper_via_direct_explainer">Every list host and every proxy tested sees your real address.</string>
+    <string name="via_direct">Directly (no chain)</string>
+    <string name="via_tor">Tor</string>
+    <string name="via_chain">Chain: %1$s</string>
+    <string name="via_missing">A chain that no longer exists</string>
+    <string name="scraper_add_all_pool">Add all %1$d to a pool</string>
+    <string name="scraper_to_pool">Add to “%1$s”</string>
+    <string name="scraper_new_pool">New pool</string>
     <string name="scraper_want">Stop after %1$d working proxies</string>
     <string name="scraper_start">Scrape and test</string>
     <string name="scraper_sources">Sources (%1$d of %2$d)</string>
@@ -116,6 +124,66 @@
     <string name="block_name">Block %1$s</string>
     <string name="block_domain">Block all of %1$s</string>
     <string name="block_ip">Block address %1$s</string>
+
+    <string name="add_rotating">Add rotating hop</string>
+    <string name="rotating_explainer">Each new connection goes through the pool\'s current proxy; every interval it moves on. Open connections stay where they are, and a proxy that fails sits out five minutes. What is in the pool, and how it stays fresh, is set on the pool.</string>
+    <string name="pool">Pool</string>
+    <string name="choose_pool">Choose a pool</string>
+    <string name="new_pool">New pool…</string>
+    <string name="pool_empty_hint">This pool is empty. Open Pools to fill it: paste a list, add scraper results, or let it update itself.</string>
+    <string name="rotate_every">Rotate every</string>
+    <string name="rotation_sequential">Sequential</string>
+    <string name="rotation_sequential_explainer">Stays on one proxy; moves to the next in the pool\'s order only when it fails.</string>
+    <string name="rotation_auto">Auto</string>
+    <string name="rotation_auto_explainer">A random proxy every interval.</string>
+    <string name="rotation_scattered">Scattered</string>
+    <string name="rotation_scattered_explainer">Every new connection gets a random proxy.</string>
+    <string name="rotating_scattered_now">A random proxy for each connection</string>
+    <string name="pool_paused_hint">This pool is paused: no automatic updates or health checks. Connections still skip proxies that fail them.</string>
+    <string name="pool_pause">Pause automatic updates and checks</string>
+    <string name="pool_resume">Resume automatic updates and checks</string>
+    <string name="pool_paused">Paused — no automatic updates or health checks</string>
+    <string name="rotating_now">Now %1$s</string>
+    <string name="rotating_next">next in %1$d s</string>
+    <string name="rotating_health">%1$d of %2$d working</string>
+
+    <string name="pools_title">Pools</string>
+    <string name="pools_explainer">A pool is a saved list of proxies that rotating hops draw from; several hops can share one. Fill it by hand, from the scraper, or let it update itself.</string>
+    <string name="pools_empty">No pools yet.</string>
+    <string name="new_pool_button">New pool</string>
+    <string name="pool_working">%1$d / %2$d working</string>
+    <string name="pool_updated">updated %1$s</string>
+    <string name="mode_manual">Manual</string>
+    <string name="mode_auto">Auto, every %1$d min while connected</string>
+    <string name="mode_auto_background">Auto, every %1$d min, also in the background</string>
+    <string name="mode_auto_label">Automatic</string>
+    <string name="mode_manual_explainer">Updates only when you press Update.</string>
+    <string name="mode_auto_explainer">While connected, updates on its schedule, and at once when fewer than half the target work.</string>
+    <string name="pool_updates">Updates</string>
+    <string name="pool_every">Every</string>
+    <string name="pool_background">Also in the background</string>
+    <string name="pool_background_explainer">Keeps the pool fresh while disconnected. Uses data and battery; Android decides the exact times.</string>
+    <string name="pool_target">Keep working</string>
+    <string name="pool_prune">Drop after fails</string>
+    <string name="pool_self_route">“%1$s” rotates over this pool: updates through it need working proxies here to carry them.</string>
+    <string name="pool_protocols">Protocols to scrape (none selected: all)</string>
+    <string name="pool_countries">Exit countries (empty: any)</string>
+    <string name="pool_unsaved">Save the settings to update with them.</string>
+    <string name="pool_update_now">Update now</string>
+    <string name="pool_check_only">Check only</string>
+    <string name="pool_paste">Paste proxies</string>
+    <string name="pool_paste_help">One per line: socks5://, socks4a:// or http://, with user:pass@ if needed. A bare host:port is taken as SOCKS5. They are checked at the next update.</string>
+    <string name="pool_paste_read">%1$d proxies read</string>
+    <string name="pool_copy">Copy all</string>
+    <string name="pool_remove_dead">Remove failing</string>
+    <string name="pool_used_by">Used by: %1$s</string>
+    <string name="pool_list_heading">Proxies — %1$d of %2$d working</string>
+    <string name="pool_delete_title">Delete “%1$s”?</string>
+    <string name="pool_delete_used">Rotating hops in %1$s use it and will have nothing to rotate through.</string>
+    <string name="proxy_unchecked">not checked yet</string>
+    <string name="proxy_failing">failed %1$d of %2$d checks before it is dropped</string>
+    <string name="proxy_last_worked">worked %1$s</string>
+    <string name="add">Add</string>
 
     <string name="test_chain">Test chain</string>
     <string name="exit_ip">Leaves the chain as %1$s</string>

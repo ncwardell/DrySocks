@@ -59,6 +59,16 @@ import com.sockschain.core.AppMode
 import com.sockschain.core.Hop
 import com.sockschain.core.HopKind
 import com.sockschain.core.Profile
+import com.sockschain.core.PoolState
+import com.sockschain.core.RotationMode
+import com.sockschain.app.Pools
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.text.font.FontFamily
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -134,6 +144,8 @@ fun EditorScreen(vm: MainViewModel, initial: Profile, isNew: Boolean, onDone: ()
                         )
                     },
                     onRemove = { draft = draft.copy(hops = draft.hops.filterIndexed { j, _ -> j != i }) },
+                    vm = vm,
+                    chainName = draft.name,
                 )
             }
 
@@ -146,6 +158,9 @@ fun EditorScreen(vm: MainViewModel, initial: Profile, isNew: Boolean, onDone: ()
                     OutlinedButton(onClick = { draft = draft.copy(hops = listOf(Hop.tor()) + draft.hops) }) {
                         Text(stringResource(R.string.add_tor))
                     }
+                }
+                OutlinedButton(onClick = { draft = draft.copy(hops = draft.hops + Hop.rotating()) }) {
+                    Text(stringResource(R.string.add_rotating))
                 }
             }
 
@@ -202,6 +217,8 @@ private fun HopCard(
     onChange: (Hop) -> Unit,
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
+    vm: MainViewModel,
+    chainName: String,
 ) {
     Card {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -227,7 +244,8 @@ private fun HopCard(
                                     onChange(
                                         when {
                                             k == HopKind.TOR -> Hop.tor()
-                                            hop.kind == HopKind.TOR -> Hop(kind = k)
+                                            k == HopKind.ROTATING -> Hop.rotating()
+                                            hop.kind == HopKind.TOR || hop.kind == HopKind.ROTATING -> Hop(kind = k)
                                             else -> hop.copy(kind = k)
                                         },
                                     )
@@ -248,6 +266,10 @@ private fun HopCard(
 
             if (hop.kind == HopKind.TOR) {
                 TorHopNote(isFirst = isFirst, isLast = isLast)
+                return@Column
+            }
+            if (hop.kind == HopKind.ROTATING) {
+                RotatingHopEditor(hop, onChange, vm, chainName)
                 return@Column
             }
 
@@ -293,6 +315,101 @@ private fun HopCard(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RotatingHopEditor(hop: Hop, onChange: (Hop) -> Unit, vm: MainViewModel, chainName: String) {
+    val pools by vm.pools.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val pool = pools.firstOrNull { it.id == hop.poolId }
+    var open by remember { mutableStateOf(false) }
+    // The engine's copy, once a second: what the next connection gets, and when that changes.
+    val state by produceState(PoolState(), hop.id) {
+        while (true) {
+            value = runCatching { Pools.state(hop.id) }.getOrDefault(PoolState())
+            delay(1000)
+        }
+    }
+
+    Text(stringResource(R.string.rotating_explainer), style = MaterialTheme.typography.bodySmall)
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = pool?.let { "${it.name}  (${it.working}/${it.proxies.size})" } ?: stringResource(R.string.choose_pool),
+            onValueChange = {}, readOnly = true, singleLine = true,
+            label = { Text(stringResource(R.string.pool)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            pools.forEach { p ->
+                DropdownMenuItem(
+                    text = { Text("${p.name}  (${p.working}/${p.proxies.size})") },
+                    onClick = { open = false; onChange(hop.copy(poolId = p.id)) },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.new_pool)) },
+                onClick = {
+                    open = false
+                    scope.launch { onChange(hop.copy(poolId = vm.newPool("$chainName pool").id)) }
+                },
+            )
+        }
+    }
+    RotationMode.entries.forEach { m ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            RadioButton(selected = hop.rotation == m, onClick = { onChange(hop.copy(rotation = m)) })
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(when (m) {
+                    RotationMode.SEQUENTIAL -> R.string.rotation_sequential
+                    RotationMode.AUTO -> R.string.rotation_auto
+                    RotationMode.SCATTERED -> R.string.rotation_scattered
+                }))
+                Text(
+                    stringResource(when (m) {
+                        RotationMode.SEQUENTIAL -> R.string.rotation_sequential_explainer
+                        RotationMode.AUTO -> R.string.rotation_auto_explainer
+                        RotationMode.SCATTERED -> R.string.rotation_scattered_explainer
+                    }),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+    if (hop.rotation == RotationMode.AUTO) {
+        OutlinedTextField(
+            value = if (hop.intervalSec == 0) "" else hop.intervalSec.toString(),
+            onValueChange = { s -> onChange(hop.copy(intervalSec = s.filter(Char::isDigit).take(5).toIntOrNull() ?: 0)) },
+            label = { Text(stringResource(R.string.rotate_every)) },
+            suffix = { Text("s") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.width(160.dp),
+        )
+    }
+    if (pool?.paused == true) {
+        Text(stringResource(R.string.pool_paused_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (pool != null && pool.proxies.isEmpty()) {
+        Text(stringResource(R.string.pool_empty_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    if (hop.rotation == RotationMode.SCATTERED && state.size > 0) {
+        Text(
+            stringResource(R.string.rotating_scattered_now) + "\n" + stringResource(R.string.rotating_health, state.healthy, state.size),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+    state.current?.let { cur ->
+        Text(
+            buildString {
+                append(stringResource(R.string.rotating_now, cur))
+                if (state.nextInMs > 0) append(" · ").append(stringResource(R.string.rotating_next, (state.nextInMs + 999) / 1000))
+                append("\n").append(stringResource(R.string.rotating_health, state.healthy, state.size))
+            },
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }
 

@@ -3,6 +3,8 @@ package mobile
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,15 +37,40 @@ type ScrapeConfig struct {
 	// Shuffle spreads the checks across sources instead of exhausting the
 	// first list before touching the next.
 	Shuffle bool `json:"shuffle"`
+	// Protocols keeps only candidates of these schemes (socks5, socks4a,
+	// http); empty keeps all. Applied before testing, so it saves time.
+	Protocols []string `json:"protocols"`
+	// Countries keeps only proxies leaving from these country codes; empty
+	// keeps all. Known only after testing, so rejects still cost a test.
+	Countries []string `json:"countries"`
+	// Candidates, when set, are tested instead of fetching Sources: a pool
+	// checking the proxies it already has.
+	Candidates []string `json:"candidates"`
+	// ReportAll sends failures to OnResult too (with ok false).
+	ReportAll bool `json:"reportAll"`
+}
+
+func (cfg ScrapeConfig) keep(c scrape.Candidate) bool {
+	if len(cfg.Protocols) == 0 {
+		return true
+	}
+	scheme, _, _ := strings.Cut(c.URL, "://")
+	return slices.Contains(cfg.Protocols, scheme)
+}
+
+func (cfg ScrapeConfig) accept(r scrape.Result) bool {
+	return len(cfg.Countries) == 0 || slices.Contains(cfg.Countries, strings.ToUpper(r.Country))
 }
 
 var (
-	scrapeMu     sync.Mutex
-	scrapeCancel context.CancelFunc
+	scrapeMu sync.Mutex
+	scrapes  = map[string]context.CancelFunc{}
 )
 
-// ScrapeStart begins a scrape in the background, cancelling any running one.
-func ScrapeStart(configJSON string, l ScrapeListener) {
+// ScrapeStart begins a scrape in the background under session, cancelling any
+// scrape already running in that session. Sessions keep the user's scrape and
+// a rotating hop's background refill from cancelling each other.
+func ScrapeStart(session string, configJSON string, l ScrapeListener) {
 	var cfg ScrapeConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		l.OnDone(err.Error())
@@ -57,17 +84,29 @@ func ScrapeStart(configJSON string, l ScrapeListener) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	scrapeMu.Lock()
-	if scrapeCancel != nil {
-		scrapeCancel()
+	if prev := scrapes[session]; prev != nil {
+		prev()
 	}
-	scrapeCancel = cancel
+	scrapes[session] = cancel
 	scrapeMu.Unlock()
 
 	go func() {
 		defer cancel()
 
-		fetched := scrape.Fetch(ctx, cfg.Sources, &chain.Chain{Hops: via})
-		cands := fetched.Candidates
+		var fetched scrape.FetchResult
+		if len(cfg.Candidates) > 0 {
+			for _, u := range cfg.Candidates {
+				fetched.Candidates = append(fetched.Candidates, scrape.Candidate{URL: u, Source: "pool"})
+			}
+		} else {
+			fetched = scrape.Fetch(ctx, cfg.Sources, &chain.Chain{Hops: via})
+		}
+		var cands []scrape.Candidate
+		for _, c := range fetched.Candidates {
+			if cfg.keep(c) {
+				cands = append(cands, c)
+			}
+		}
 		if cfg.Shuffle {
 			shuffle(cands)
 		}
@@ -84,7 +123,11 @@ func ScrapeStart(configJSON string, l ScrapeListener) {
 		if timeout <= 0 {
 			timeout = 10 * time.Second
 		}
-		scrape.CheckAll(ctx, cands, via, scrape.DefaultTarget, cfg.Workers, cfg.Want, timeout,
+		opts := scrape.CheckOpts{
+			Workers: cfg.Workers, Want: cfg.Want, PerCheck: timeout,
+			Accept: cfg.accept, ReportAll: cfg.ReportAll,
+		}
+		scrape.CheckAll(ctx, cands, via, scrape.DefaultTarget, opts,
 			func(r scrape.Result) {
 				b, _ := json.Marshal(r)
 				l.OnResult(string(b))
@@ -99,13 +142,13 @@ func ScrapeStart(configJSON string, l ScrapeListener) {
 	}()
 }
 
-// ScrapeCancel stops a running scrape; its OnDone still arrives.
-func ScrapeCancel() {
+// ScrapeCancel stops the scrape running in session; its OnDone still arrives.
+func ScrapeCancel(session string) {
 	scrapeMu.Lock()
 	defer scrapeMu.Unlock()
-	if scrapeCancel != nil {
-		scrapeCancel()
-		scrapeCancel = nil
+	if cancel := scrapes[session]; cancel != nil {
+		cancel()
+		delete(scrapes, session)
 	}
 }
 
