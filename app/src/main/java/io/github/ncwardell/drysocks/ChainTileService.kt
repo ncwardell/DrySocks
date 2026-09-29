@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.graphics.drawable.Icon
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import kotlinx.coroutines.CoroutineScope
@@ -49,19 +50,19 @@ class ChainTileService : TileService() {
         }
     }
 
+    /** On: the filled mark and the chain's name. Off: the hollow mark, "Off". */
     private fun render(status: VpnStatus) {
         val tile = qsTile ?: return
-        tile.state = when (status) {
-            is VpnStatus.Running, is VpnStatus.Connecting, is VpnStatus.Blocked -> Tile.STATE_ACTIVE
-            else -> Tile.STATE_INACTIVE
-        }
+        val on = status is VpnStatus.Running || status is VpnStatus.Connecting || status is VpnStatus.Blocked
+        tile.state = if (on) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.icon = Icon.createWithResource(this, if (on) R.drawable.ic_tile else R.drawable.ic_tile_off)
         if (Build.VERSION.SDK_INT >= 29) {
             tile.subtitle = when (status) {
                 is VpnStatus.Running -> status.profile
                 is VpnStatus.Connecting -> getString(R.string.status_connecting)
                 is VpnStatus.Blocked -> getString(R.string.status_blocked_short)
                 is VpnStatus.Failed -> getString(R.string.status_failed_short)
-                VpnStatus.Stopped -> null
+                VpnStatus.Stopped -> getString(R.string.tile_off)
             }
         }
         tile.updateTile()

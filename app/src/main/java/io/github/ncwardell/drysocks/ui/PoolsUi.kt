@@ -69,12 +69,17 @@ import io.github.ncwardell.drysocks.core.ScrapeVia
 import io.github.ncwardell.drysocks.core.UpdateMode
 import io.github.ncwardell.drysocks.core.parseProxyList
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** The Pools tab: saved pools, and the scraper that fills them. */
 @Composable
-fun PoolsScreen(vm: MainViewModel, onDone: () -> Unit) {
+fun PoolsScreen(vm: MainViewModel) {
     val pools by vm.pools.collectAsStateWithLifecycle()
-    val profiles by vm.profiles.collectAsStateWithLifecycle()
     val progress by PoolUpdater.progress.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf<String?>(null) }
@@ -85,58 +90,68 @@ fun PoolsScreen(vm: MainViewModel, onDone: () -> Unit) {
         return
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.pools_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
-                },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { scope.launch { open = vm.newPool("New pool").id } },
-                icon = { Icon(Icons.Default.Add, null) },
-                text = { Text(stringResource(R.string.new_pool_button)) },
-            )
-        },
-    ) { pad ->
-        LazyColumn(
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pad.calculateTopPadding() + 8.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { Text(stringResource(R.string.pools_explainer), style = MaterialTheme.typography.bodySmall) }
-            if (pools.isEmpty()) item { Text(stringResource(R.string.pools_empty), style = MaterialTheme.typography.bodyMedium) }
-            items(pools, key = { it.id }) { p ->
-                Card(Modifier.fillMaxWidth().clickable { open = p.id }) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(p.name, style = MaterialTheme.typography.titleMedium)
-                                Text(stringResource(R.string.pool_working, p.working, p.proxies.size), style = MaterialTheme.typography.labelLarge)
-                            }
-                            IconButton(onClick = { vm.setPaused(p.id, !p.paused) }) {
-                                Icon(
-                                    if (p.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                    stringResource(if (p.paused) R.string.pool_resume else R.string.pool_pause),
-                                )
-                            }
-                        }
-                        Text(
-                            if (p.paused) stringResource(R.string.pool_paused) else modeLine(p) + "  ·  " + viaLabel(p.update.via, profiles),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (p.paused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                        )
-                        val prog = progress[p.id]
-                        when {
-                            prog != null -> ProgressLine(prog)
-                            p.lastError != null -> Text(p.lastError!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
-                            p.lastUpdated > 0 -> Text(stringResource(R.string.pool_updated, ago(p.lastUpdated)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
+    LazyColumn(
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.pools_title), style = DsType.ScreenTitle, modifier = Modifier.weight(1f))
+                OutlinePill(stringResource(R.string.new_pill), height = 36.dp, onClick = { scope.launch { open = vm.newPool("New pool").id } })
             }
+        }
+        item { Text(stringResource(R.string.pools_explainer), style = DsType.Secondary) }
+        if (pools.isEmpty()) item { DashedNote(stringResource(R.string.pools_empty)) }
+        items(pools, key = { it.id }) { p -> PoolCard(vm, p, progress[p.id], onOpen = { open = p.id }) }
+        item { FindFreeProxies(vm) }
+    }
+}
+
+@Composable
+private fun PoolCard(vm: MainViewModel, p: ProxyPool, prog: UpdateProgress?, onOpen: () -> Unit) {
+    val total = p.proxies.size
+    val frac = if (total == 0) 0f else p.working / total.toFloat()
+    val health = when {
+        p.working == 0 -> Ds.Coral
+        frac >= 0.5f -> Ds.Lime
+        else -> Ds.Amber
+    }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Ds.Surface).clickable(onClick = onOpen)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(p.name, style = DsType.CardTitle, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${p.working}/$total", style = DsType.MonoStat.copy(color = if (total == 0) Ds.Dim else health))
+        }
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Ds.Track)) {
+            Box(Modifier.fillMaxWidth(frac).height(6.dp).clip(CircleShape).background(health))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    prog != null -> if (prog.of > 0) "${prog.step} — ${prog.done} of ${prog.of}" else prog.step + "…"
+                    p.paused -> stringResource(R.string.pool_paused)
+                    p.lastError != null -> p.lastError!!
+                    else -> modeLine(p) + (if (p.lastUpdated > 0) " · " + stringResource(R.string.pool_updated, ago(p.lastUpdated)) else "")
+                },
+                style = DsType.Secondary.copy(color = if (p.lastError != null && prog == null) Ds.Coral else Ds.Muted),
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Box(Modifier.size(40.dp).clip(CircleShape).clickable { vm.setPaused(p.id, !p.paused) }, contentAlignment = Alignment.Center) {
+                Icon(
+                    if (p.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    stringResource(if (p.paused) R.string.pool_resume else R.string.pool_pause),
+                    tint = Ds.Muted, modifier = Modifier.size(18.dp),
+                )
+            }
+            OutlinePill(
+                stringResource(if (prog != null) R.string.pool_updating else R.string.pool_update_now),
+                height = 36.dp, enabled = prog == null,
+                onClick = { vm.updatePool(p.id) },
+            )
         }
     }
 }

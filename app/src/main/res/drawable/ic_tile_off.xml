@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quick Settings tile, off: the exit is hollow. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="0.603" android:fillColor="#00000000" android:pathData="M1.301,12.000 a1.959,1.959 0 1,0 3.918,0 a1.959,1.959 0 1,0 -3.918,0 Z"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="0.603" android:fillColor="#00000000" android:pathData="M9.137,12.000 a1.959,1.959 0 1,0 3.918,0 a1.959,1.959 0 1,0 -3.918,0 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M5.219,11.699 h3.918 v0.603 h-3.918 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M13.055,11.699 h3.918 v0.603 h-3.918 Z"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="0.753" android:fillColor="#00000000" android:pathData="M17.048,12.000 a2.788,2.788 0 1,0 5.575,0 a2.788,2.788 0 1,0 -5.575,0 Z"/>
+</vector>

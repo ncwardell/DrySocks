@@ -17,6 +17,7 @@ import io.github.ncwardell.drysocks.core.ProxyPool
 import io.github.ncwardell.drysocks.core.ProbeResult
 import io.github.ncwardell.drysocks.engine.mobile.Mobile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +70,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun newProfile() = Profile(id = UUID.randomUUID().toString())
 
     fun save(p: Profile) = viewModelScope.launch { store.save(p) }
+
+    /** A new, empty chain, selected so the Chains tab opens on it. */
+    fun createChain(then: () -> Unit = {}) = viewModelScope.launch {
+        val p = newProfile().copy(hops = emptyList())
+        store.save(p)
+        store.select(p.id)
+        then()
+    }
     fun delete(id: String) = viewModelScope.launch { store.delete(id) }
     fun select(id: String) = viewModelScope.launch { store.select(id) }
 
@@ -215,6 +224,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         Mobile.scrapeCancel(SCRAPE_SESSION)
+    }
+
+    // --- Exit address --------------------------------------------------------------------
+
+    private val _exit = MutableStateFlow<String?>(null)
+    /** Where sites see this phone, learned once per connection through the running chain. */
+    val exit: StateFlow<String?> = _exit.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            ChainVpnService.status.collect { s ->
+                if (s is VpnStatus.Running) learnExit() else _exit.value = null
+            }
+        }
+    }
+
+    // Tor reached through free proxies can take a minute to build a circuit, so this keeps
+    // asking, every 15 s, for as long as the VPN runs.
+    private fun learnExit() = viewModelScope.launch {
+        val app = getApplication<Application>()
+        repeat(40) { attempt ->
+            delay(if (attempt == 0) 1_500 else 15_000)
+            if (ChainVpnService.status.value !is VpnStatus.Running) return@launch
+            val p = store.selected() ?: return@launch
+            val torPort = when (val t = TorController.status.value) {
+                is TorStatus.On -> t.socksPort
+                is TorStatus.Starting -> t.socksPort
+                else -> null
+            }
+            if (p.usesTor && torPort == null) return@repeat
+            val ip = runCatching {
+                Pools.sync(app, p)
+                withContext(Dispatchers.IO) { ProbeResult.parse(Mobile.probe(p.engineConfig(ChainVpnService.MTU, torPort))) }.exitIp
+            }.getOrNull()
+            if (ip != null) {
+                _exit.value = ip
+                return@launch
+            }
+        }
     }
 
     // --- Network view ------------------------------------------------------------------

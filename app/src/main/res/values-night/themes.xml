@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  The dark counterpart. Without it the window theme stays Light while Compose renders its dark
-  scheme, and the system bar icons are chosen for the wrong background.
--->
-<resources>
-    <style name="Theme.DrySocks" parent="android:Theme.Material.NoActionBar" />
-</resources>

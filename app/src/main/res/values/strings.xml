@@ -26,7 +26,7 @@
     <string name="lockdown_cost_lan">With Block connections without VPN on, Android may block the local network this chain leaves out.</string>
 
     <string name="new_chain">New chain</string>
-    <string name="no_chains">No chains yet. A chain is an ordered list of proxies your traffic passes through, one inside the next.</string>
+    <string name="no_chains">No chains yet. Your traffic is out in the rain.</string>
     <string name="edit">Edit</string>
     <string name="save">Save</string>
     <string name="delete">Delete</string>
@@ -70,7 +70,7 @@
     <string name="scraper_via">Scrape and test through</string>
     <string name="scraper_via_explainer">List hosts and the proxies see this route\'s exit, not you. Times include the route.</string>
     <string name="scraper_via_direct_explainer">Every list host and every proxy tested sees your real address.</string>
-    <string name="via_direct">Directly (no chain)</string>
+    <string name="via_direct">Directly</string>
     <string name="via_tor">Tor</string>
     <string name="via_chain">Chain: %1$s</string>
     <string name="via_missing">A chain that no longer exists</string>
@@ -193,4 +193,75 @@
 
     <string name="test_chain">Test chain</string>
     <string name="exit_ip">Leaves the chain as %1$s</string>
+
+    <!-- DrySocks redesign -->
+    <string name="tile_off">Off</string>
+    <string name="tagline">Nothing leaks.</string>
+    <string name="tagline_secondary">Route your traffic how you want it routed.</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_chains">Chains</string>
+    <string name="tab_network">Network</string>
+    <string name="tab_pools">Pools</string>
+
+    <string name="orb_connect">Connect</string>
+    <string name="orb_connecting">Connecting</string>
+    <string name="orb_connected">Connected</string>
+    <string name="orb_blocking">Blocking</string>
+    <string name="orb_hint_off">tap to route</string>
+    <string name="orb_hint_connecting">building circuit</string>
+    <string name="orb_hint_on">tap to stop</string>
+    <string name="orb_hint_blocked">fail-closed</string>
+    <string name="status_through">Through %1$s</string>
+    <string name="status_sites_see">Sites see %1$s, not you.</string>
+    <string name="status_finding_exit">Finding where you come out…</string>
+    <string name="status_building">Building the route through %1$s.</string>
+    <string name="status_goes_direct">Traffic goes direct. Tap to send it through %1$s.</string>
+    <string name="status_no_chain">Traffic goes direct. Make a chain to send it somewhere else.</string>
+    <string name="status_blocked_title">Blocking all traffic</string>
+    <string name="switch_next_connect">Switch applies on next connect</string>
+
+    <string name="section_route">Route</string>
+    <string name="section_chains">Chains</string>
+    <string name="section_leak_guard">Leak guard</string>
+    <string name="edit_link">Edit →</string>
+    <string name="new_chain_link">+ New chain</string>
+    <string name="guard_always_on">Always-on VPN</string>
+    <string name="guard_lockdown">Block connections without VPN</string>
+
+    <string name="new_pill">+ New</string>
+    <string name="node_phone">This phone</string>
+    <string name="node_internet">Internet</string>
+    <string name="no_hops">No hops yet. Your traffic is out in the rain.</string>
+    <string name="tor_detail">built-in · tor-android</string>
+    <string name="proxy_unset">tap to set the address</string>
+    <string name="proxy_note">Tap the tag to switch protocol; tap the address to edit it.</string>
+    <string name="add_proxy">+ Proxy</string>
+    <string name="add_tor_pill">+ Tor</string>
+    <string name="add_rotating_pill">+ Rotating</string>
+    <string name="rotation_every">Every %1$d s</string>
+    <string name="rotation_failover">Failover</string>
+    <string name="dns_over_https">DNS: over HTTPS, asked from the last hop</string>
+    <string name="dns_over_tcp">DNS: over TCP, asked from the last hop</string>
+    <string name="bypass_lan_short">Printers and the router stay reachable directly.</string>
+    <string name="apps_all">All apps</string>
+    <string name="apps_all_except_n">All apps except %1$d chosen</string>
+    <string name="apps_only_n">Only %1$d chosen</string>
+    <string name="test_add_hop">Add a hop to test</string>
+    <string name="testing">Testing…</string>
+    <string name="leaves_as">Leaves the chain as %1$s</string>
+    <string name="delete_chain">Delete this chain</string>
+    <string name="delete_chain_title">Delete “%1$s”?</string>
+
+    <string name="down_last_60">Down, last 60 s</string>
+    <string name="connections_tap_hint">Tap a connection to block its host; hold for more.</string>
+    <string name="toast_blocked">Blocked %1$s</string>
+    <string name="toast_unblocked">Unblocked %1$s</string>
+
+    <string name="pool_updating">Updating…</string>
+    <string name="scraper_warning_short">Each result passes a verified TLS handshake, so it can\'t read your HTTPS, but it still sees where you connect. Put free proxies after Tor.</string>
+    <string name="stop">Stop</string>
+    <string name="scrape_again">Scrape again</string>
+    <string name="tested_x_of_y">Tested %1$d of %2$s</string>
+    <string name="n_working">%1$d working</string>
+    <string name="add_all_to">Add all %1$d to “%2$s”</string>
 </resources>

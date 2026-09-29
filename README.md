@@ -1,5 +1,7 @@
 # DrySocks
 
+**Nothing leaks.** Route your traffic how you want it routed.
+
 A modern rebuild of SocksDroid: sends a phone's traffic through a proxy, without root, using
 Android's `VpnService`. Unlike SocksDroid it takes a **chain** of proxies — SOCKS5, SOCKS4a,
 HTTP CONNECT, and a built-in Tor — each one reached through the ones before it. It can also
@@ -170,3 +172,11 @@ built-in Tor, the scraper — keeps working: Android exempts a VPN app from its 
 - Hops are reordered with arrows, not drag and drop.
 - Nothing here changes what apps say about the device from inside their own encrypted
   connections — user agent, screen size, model. See `docs/design.md`, *Fingerprinting*.
+
+## Look and licences
+
+The interface follows the design handoff in the brand board: dark-first, one signal colour
+(lime: traffic is going through the chain; coral: exposed, blocked or failed), Geist for the
+interface and Geist Mono for anything a machine reads back. Geist and Geist Mono are bundled
+from Google Fonts under the SIL Open Font License 1.1 (`app/src/main/assets/licenses/`).
+

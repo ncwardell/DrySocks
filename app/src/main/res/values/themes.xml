@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark only, like the app: ink behind everything from the first frame, so a cold start
+  never flashes white before Compose draws.
+-->
 <resources>
-    <style name="Theme.DrySocks" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.DrySocks" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:colorBackground">@color/ink</item>
+    </style>
 </resources>
