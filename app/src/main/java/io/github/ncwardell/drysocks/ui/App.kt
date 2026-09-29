@@ -66,6 +66,8 @@ import io.github.ncwardell.drysocks.ChainVpnService
 import io.github.ncwardell.drysocks.MainViewModel
 import io.github.ncwardell.drysocks.Protection
 import io.github.ncwardell.drysocks.R
+import io.github.ncwardell.drysocks.TorController
+import io.github.ncwardell.drysocks.TorStatus
 import io.github.ncwardell.drysocks.VpnStatus
 import io.github.ncwardell.drysocks.core.AppMode
 import io.github.ncwardell.drysocks.core.Hop
@@ -73,6 +75,7 @@ import io.github.ncwardell.drysocks.core.HopKind
 import io.github.ncwardell.drysocks.core.Profile
 import io.github.ncwardell.drysocks.core.ProxyPool
 import io.github.ncwardell.drysocks.core.RotationMode
+import io.github.ncwardell.drysocks.core.flag
 
 enum class Tab(val label: Int) { Home(R.string.tab_home), Chains(R.string.tab_chains), Network(R.string.tab_network), Pools(R.string.tab_pools) }
 
@@ -134,7 +137,10 @@ private fun HomeScreen(vm: MainViewModel, onConnect: () -> Unit, onDisconnect: (
     val status by ChainVpnService.status.collectAsStateWithLifecycle()
     val traffic by ChainVpnService.traffic.collectAsStateWithLifecycle()
     val protection by ChainVpnService.protection.collectAsStateWithLifecycle()
-    val exit by vm.exit.collectAsStateWithLifecycle()
+    val tor by TorController.status.collectAsStateWithLifecycle()
+    val exitIp by vm.exit.collectAsStateWithLifecycle()
+    val exitCountry by vm.exitCountry.collectAsStateWithLifecycle()
+    val exit = exitIp?.let { ip -> exitCountry?.let { "$ip ${flag(it.code)}" } ?: ip }
     val toast = LocalToast.current
     val switchNote = stringResource(R.string.switch_next_connect)
     val selected = profiles.firstOrNull { it.id == (selectedId ?: profiles.firstOrNull()?.id) }
@@ -155,7 +161,8 @@ private fun HomeScreen(vm: MainViewModel, onConnect: () -> Unit, onDisconnect: (
         item { Header(orb == OrbState.On, protection) }
         item {
             Centered {
-                Orb(orb, enabled = selected != null) {
+                val hint = (tor as? TorStatus.Starting)?.takeIf { orb == OrbState.Connecting }?.let { "building circuit · ${it.percent}%" }
+                Orb(orb, enabled = selected != null, hintOverride = hint) {
                     when (orb) {
                         OrbState.Off -> onConnect()
                         else -> onDisconnect()
@@ -204,7 +211,7 @@ private fun Header(connected: Boolean, protection: Protection?) {
 }
 
 @Composable
-private fun Orb(state: OrbState, enabled: Boolean, onClick: () -> Unit) {
+private fun Orb(state: OrbState, enabled: Boolean, hintOverride: String? = null, onClick: () -> Unit) {
     val fill by animateColorAsState(if (state == OrbState.On) Ds.Lime else Ds.Surface, tween(350), label = "orb")
     val text by animateColorAsState(
         when (state) {
@@ -259,7 +266,7 @@ private fun Orb(state: OrbState, enabled: Boolean, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    stringResource(
+                    hintOverride ?: stringResource(
                         when (state) {
                             OrbState.Off -> R.string.orb_hint_off
                             OrbState.Connecting -> R.string.orb_hint_connecting

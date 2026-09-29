@@ -20,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -232,10 +234,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Where sites see this phone, learned once per connection through the running chain. */
     val exit: StateFlow<String?> = _exit.asStateFlow()
 
+    private val _exitCountry = MutableStateFlow<Country?>(null)
+    val exitCountry: StateFlow<Country?> = _exitCountry.asStateFlow()
+
     init {
         viewModelScope.launch {
             ChainVpnService.status.collect { s ->
-                if (s is VpnStatus.Running) learnExit() else _exit.value = null
+                if (s is VpnStatus.Running) learnExit() else {
+                    _exit.value = null
+                    _exitCountry.value = null
+                }
             }
         }
     }
@@ -259,6 +267,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { ProbeResult.parse(Mobile.probe(p.engineConfig(ChainVpnService.MTU, torPort))) }.exitIp
             }.getOrNull()
             if (ip != null) {
+                _exitCountry.value = withContext(Dispatchers.IO) { Geo.locate(app, ip) }
                 _exit.value = ip
                 return@launch
             }
@@ -274,6 +283,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Polls only while the network screen is on screen. */
     val network: StateFlow<NetView> = NetworkWatcher(app).watch()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(2_000), NetView())
+
+    private val mapper = RouteMapper(app)
+
+    /**
+     * The route and where connections end up, located offline; recomputed as the network
+     * view updates, and only while the map is on screen.
+     */
+    val routeMap: StateFlow<RouteMap> = combine(network, profiles, pools, selectedId, exit) { n, ps, pl, sel, ex ->
+        val p = ps.firstOrNull { it.id == (sel ?: ps.firstOrNull()?.id) }
+        mapper.map(p, pl, n.snapshot, ChainVpnService.status.value is VpnStatus.Running, ex)
+    }.flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.WhileSubscribed(2_000), RouteMap())
 
     /** Returns the rule as stored, or null if [raw] is not a domain, address or range. */
     suspend fun block(raw: String): String? = blockStore.add(raw)

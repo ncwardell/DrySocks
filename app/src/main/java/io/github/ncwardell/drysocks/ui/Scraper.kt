@@ -62,6 +62,8 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MenuAnchorType
 import kotlin.math.roundToInt
+import io.github.ncwardell.drysocks.core.flag
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
@@ -148,9 +150,7 @@ fun FindFreeProxies(vm: MainViewModel) {
         }
         state.found.forEach { r ->
             Row(Modifier.fillMaxWidth().enter().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(34.dp)) {
-                    r.country?.let { HopTag(it, Ds.hairline(0.08f), Ds.Bone) }
-                }
+                Text(flag(r.country), fontSize = 18.sp, modifier = Modifier.width(30.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(r.url.substringAfter("://"), style = DsType.Mono.copy(color = Ds.Bone), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(r.url.substringBefore("://"), style = DsType.Mono.copy(color = Ds.Dim))
@@ -264,6 +264,3 @@ private fun SourcesDialog(initial: List<ScrapeSource>, onSave: (List<ScrapeSourc
     )
 }
 
-/** Regional-indicator flag for a two-letter country code. */
-private fun flag(cc: String): String =
-    if (cc.length != 2 || !cc.all { it in 'A'..'Z' }) "" else cc.map { Character.toChars(0x1F1E6 + (it - 'A')).concatToString() }.joinToString("")

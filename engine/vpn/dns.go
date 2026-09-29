@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
+
 	"drysocks/engine/chain"
 	"drysocks/engine/monitor"
 )
@@ -26,6 +28,7 @@ type dnsClient struct {
 	server string
 	idle   chan net.Conn
 	mon    *monitor.Monitor
+	cache  *dnsCache
 	// doh is set when server is an https:// URL: DNS over HTTPS (RFC 8484).
 	// Proxies that allow nothing but web ports still carry it, and it is
 	// encrypted end to end, so the hops cannot read or alter the lookups.
@@ -40,7 +43,7 @@ func newDNSClient(c *chain.Chain, server string, mon *monitor.Monitor) *dnsClien
 	if mon == nil {
 		mon = monitor.New(nil)
 	}
-	d := &dnsClient{chain: c, server: server, idle: make(chan net.Conn, 4), mon: mon}
+	d := &dnsClient{chain: c, server: server, idle: make(chan net.Conn, 4), mon: mon, cache: newDNSCache()}
 	if strings.HasPrefix(server, "https://") {
 		d.doh = &http.Client{
 			Timeout: dnsTimeout,
@@ -76,9 +79,39 @@ func (d *dnsClient) exchangeDoH(ctx context.Context, query []byte) ([]byte, erro
 	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 }
 
-// resolve is what both DNS paths call: the blocklist, the log, then upstream.
+// resolve is what both DNS paths call: the blocklist, the log, then the cache and
+// upstream.
 func (d *dnsClient) resolve(ctx context.Context, query []byte) ([]byte, error) {
-	return d.mon.Resolve(ctx, query, d.exchange)
+	return d.mon.Resolve(ctx, query, d.cachedExchange)
+}
+
+func (d *dnsClient) cachedExchange(ctx context.Context, query []byte) ([]byte, error) {
+	if resp := d.cache.get(query, false); resp != nil {
+		return resp, nil
+	}
+	resp, err := d.exchange(ctx, query)
+	if err != nil {
+		if stale := d.cache.get(query, true); stale != nil {
+			return stale, nil
+		}
+		return nil, err
+	}
+	d.cache.put(query, resp)
+	return resp, nil
+}
+
+// warm makes one lookup, so the first real one finds the tunnel to the resolver already
+// built: through Tor that tunnel alone can take seconds.
+func (d *dnsClient) warm(ctx context.Context) error {
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 1, RecursionDesired: true})
+	b.StartQuestions()
+	b.Question(dnsmessage.Question{Name: dnsmessage.MustNewName("one.one.one.one."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+	q, err := b.Finish()
+	if err != nil {
+		return err
+	}
+	_, err = d.cachedExchange(ctx, q)
+	return err
 }
 
 // serveTCP answers DNS over TCP in-process, for apps that use TCP to the

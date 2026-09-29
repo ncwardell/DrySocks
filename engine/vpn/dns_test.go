@@ -16,6 +16,7 @@ import (
 	"time"
 
 	M "github.com/xjasonlyu/tun2socks/v2/metadata"
+	"golang.org/x/net/dns/dnsmessage"
 
 	"drysocks/engine/chain"
 	"drysocks/engine/monitor"
@@ -199,5 +200,83 @@ func TestDNSOverHTTPSThroughTheChain(t *testing.T) {
 	}
 	if n := tunnels.Load(); n != 1 {
 		t.Errorf("%d tunnels for two lookups, want 1: DoH should keep its connection", n)
+	}
+}
+
+func dnsQuery(t *testing.T, id uint16, name string) []byte {
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: id, RecursionDesired: true})
+	b.StartQuestions()
+	b.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+	q, err := b.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return q
+}
+
+func dnsAnswer(t *testing.T, q []byte, ttl uint32) []byte {
+	var p dnsmessage.Parser
+	h, _ := p.Start(q)
+	qq, _ := p.Question()
+	h.Response = true
+	b := dnsmessage.NewBuilder(nil, h)
+	b.StartQuestions()
+	b.Question(qq)
+	b.StartAnswers()
+	b.AResource(dnsmessage.ResourceHeader{Name: qq.Name, Class: dnsmessage.ClassINET, TTL: ttl}, dnsmessage.AResource{A: [4]byte{192, 0, 2, 1}})
+	r, err := b.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestCacheAnswersWithTheQuerysIDAndServesStaleWhenUpstreamFails(t *testing.T) {
+	c := newDNSCache()
+	q1 := dnsQuery(t, 7, "Example.COM.")
+	c.put(q1, dnsAnswer(t, q1, 300))
+
+	// Same name, any case, new ID: answered from the cache, carrying the new ID.
+	q2 := dnsQuery(t, 99, "example.com.")
+	got := c.get(q2, false)
+	if got == nil || got[0] != 0 || got[1] != 99 {
+		t.Fatalf("cached answer %v, want one with ID 99", got)
+	}
+
+	// Expired: not fresh, but good enough when the chain cannot answer.
+	c.mu.Lock()
+	for k, e := range c.m {
+		e.expires = time.Now().Add(-time.Minute)
+		c.m[k] = e
+	}
+	c.mu.Unlock()
+	if c.get(q2, false) != nil {
+		t.Error("an expired answer was served as fresh")
+	}
+	if c.get(q2, true) == nil {
+		t.Error("an expired answer was not available as stale")
+	}
+}
+
+func TestCachedExchangeFallsBackToStale(t *testing.T) {
+	var calls atomic.Int32
+	hop, _ := chain.ParseHop("http://" + countingProxy(t, &calls))
+	d := newDNSClient(&chain.Chain{Hops: []chain.Hop{hop}}, tcpDNS(t), nil)
+	q := dnsQuery(t, 1, "stale.example.")
+	d.cache.put(q, dnsAnswer(t, q, 60))
+	d.cache.mu.Lock()
+	for k, e := range d.cache.m {
+		e.expires = time.Now().Add(-time.Minute)
+		d.cache.m[k] = e
+	}
+	d.cache.mu.Unlock()
+	// Upstream "answers" by reversing the query, which does not parse as an answer
+	// for the cache but does come back: a live upstream wins over stale.
+	d.server = "127.0.0.1:1" // nothing listens: upstream fails
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := d.cachedExchange(ctx, q)
+	if err != nil || resp == nil {
+		t.Fatalf("got %v, %v; want the stale answer", resp, err)
 	}
 }

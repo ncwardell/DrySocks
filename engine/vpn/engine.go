@@ -135,6 +135,10 @@ const (
 	poolCheckTarget = "1.1.1.1:443"
 )
 
+// WarmDNS makes one lookup through the chain, so the tunnel to the resolver is up
+// before the first app asks. Call it once the chain can carry traffic.
+func (e *Engine) WarmDNS(ctx context.Context) error { return e.dns.warm(ctx) }
+
 func (e *Engine) Stop() {
 	e.stop()
 	e.dev.Close()

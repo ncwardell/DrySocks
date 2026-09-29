@@ -98,6 +98,30 @@ object TorController {
         }
     }
 
+    /** One relay of a Tor circuit. */
+    data class Relay(val nickname: String, val address: String)
+
+    /**
+     * The relays of the newest built general-purpose circuit, guard first: where traffic
+     * through Tor is actually going. Empty when Tor is not running or has no circuit yet.
+     * Streams may use other circuits too; this is a representative one, not every one.
+     */
+    fun circuit(): List<Relay> {
+        val svc = service ?: return emptyList()
+        val status = runCatching { svc.getInfo("circuit-status") }.getOrNull() ?: return emptyList()
+        // "5 BUILT $FP~nick,$FP~nick,$FP~nick BUILD_FLAGS=... PURPOSE=GENERAL ..."
+        val line = status.lines().lastOrNull { " BUILT " in it && "PURPOSE=GENERAL" in it } ?: return emptyList()
+        val path = line.split(' ').getOrNull(2) ?: return emptyList()
+        return path.split(',').mapNotNull { hop ->
+            val fp = hop.removePrefix("$").substringBefore('~').substringBefore('=')
+            val nick = hop.substringAfter('~', hop.substringAfter('=', "relay"))
+            // "r nick id digest published-date time IP ORPort DirPort"
+            val ns = runCatching { svc.getInfo("ns/id/$fp") }.getOrNull() ?: return@mapNotNull null
+            val r = ns.lines().firstOrNull { it.startsWith("r ") }?.split(' ') ?: return@mapNotNull null
+            r.getOrNull(6)?.let { Relay(nick, it) }
+        }
+    }
+
     /** Waits until Tor has built a circuit; false on timeout. For tests of the chain. */
     suspend fun awaitCircuit(timeoutMs: Long = 120_000): Boolean =
         withTimeoutOrNull(timeoutMs) { status.first { it is TorStatus.On || it is TorStatus.Failed } } is TorStatus.On

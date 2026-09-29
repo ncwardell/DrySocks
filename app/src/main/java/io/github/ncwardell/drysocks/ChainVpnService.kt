@@ -212,8 +212,24 @@ class ChainVpnService : VpnService() {
         PoolUpdater.startAuto(this)
         _traffic.value = 0L to 0L
         baseline = Mobile.bytesUp() to Mobile.bytesDown()
-        _status.value = VpnStatus.Running(profile.name)
-        notify(getString(R.string.status_running, profile.name))
+        // Up, but through Tor nothing gets out until Tor has a circuit: say "Connecting"
+        // until then, rather than "Connected" over a route that cannot carry anything yet.
+        // Either way, warm DNS before calling it connected, so the first lookup is quick.
+        if (profile.usesTor) {
+            notify(getString(R.string.status_building_tor))
+            scope.launch {
+                TorController.awaitCircuit(180_000)
+                runCatching { Mobile.warmDNS() }
+                lock.withLock {
+                    if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile.name)
+                }
+            }
+        } else {
+            scope.launch {
+                runCatching { Mobile.warmDNS() }
+                lock.withLock { if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile.name) }
+            }
+        }
         ticker = scope.launch {
             while (isActive) {
                 _traffic.value = (Mobile.bytesUp() - baseline.first) to (Mobile.bytesDown() - baseline.second)
@@ -221,6 +237,11 @@ class ChainVpnService : VpnService() {
             }
         }
         return null
+    }
+
+    private fun markRunning(name: String) {
+        _status.value = VpnStatus.Running(name)
+        notify(getString(R.string.status_running, name))
     }
 
     private fun builderFor(profile: Profile): Builder {

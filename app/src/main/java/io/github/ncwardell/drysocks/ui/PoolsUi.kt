@@ -69,6 +69,7 @@ import io.github.ncwardell.drysocks.core.ScrapeVia
 import io.github.ncwardell.drysocks.core.UpdateMode
 import io.github.ncwardell.drysocks.core.parseProxyList
 import kotlinx.coroutines.launch
+import io.github.ncwardell.drysocks.core.flag
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -350,7 +351,7 @@ private fun ProxyRow(px: PoolProxy, u: PoolUpdate, onRemove: () -> Unit, onOpen:
                 when {
                     px.working -> buildString {
                         append("${px.ms} ms")
-                        px.country?.let { append("  ·  $it") }
+                        px.country?.let { append("  ·  ${flag(it)} $it") }
                         px.exitIp?.takeIf { it != px.url.substringAfter("://").substringBeforeLast(':') }?.let { append("  ·  exits as $it") }
                         append("  ·  ").append(ago(px.lastOk))
                     }
@@ -415,7 +416,7 @@ private fun ReportDialog(px: PoolProxy, onInspect: () -> Unit, onDismiss: () -> 
                     line("Any port", yes(r.anyPort))
                     line("Tor", if (r.tor) "gets through" else "blocked or failed")
                     line("Tampering", if (r.tampers) "adds " + r.addedHeaders.joinToString() else if (r.web80) "none seen" else "not tested", r.tampers)
-                    line("Exits as", listOfNotNull(r.exitIp, r.country).joinToString("  ").ifEmpty { "—" })
+                    line("Exits as", listOfNotNull(r.exitIp, r.country?.let { "${flag(it)} $it" }).joinToString("  ").ifEmpty { "—" })
                     line("Network", listOfNotNull(r.network, r.isp).joinToString(" — "))
                     line("Listed as proxy", yes(r.flagged), r.flagged)
                     line("Speed", if (r.kbps > 0) "${r.kbps} KB/s" else "—")

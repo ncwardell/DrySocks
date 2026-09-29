@@ -114,7 +114,7 @@ fun NetworkScreen(vm: MainViewModel) {
             DsSegmented(
                 listOf(
                     stringResource(R.string.tab_connections), stringResource(R.string.tab_dns),
-                    stringResource(R.string.tab_blocklist), stringResource(R.string.tab_graph),
+                    stringResource(R.string.tab_blocklist), stringResource(R.string.tab_map),
                 ),
                 selected = tab, onSelect = { tab = it },
             )
@@ -123,11 +123,11 @@ fun NetworkScreen(vm: MainViewModel) {
             0 -> connections(view, rules, copy, onTap = ::toggle, onLong = { c -> target = targetFor(c, view.owners[c.id]) })
             1 -> lookups(view, copy, onTap = { l -> target = BlockTarget(l.name, l.answers.joinToString(", "), l.name, null) })
             2 -> item { Blocklist(vm, rules) }
-            3 -> item {
-                if (!view.running) {
-                    DashedNote(stringResource(R.string.network_not_running))
-                } else {
-                    FlowGraph(view) { host, ip -> target = BlockTarget(host ?: ip ?: "?", "", host, ip) }
+            3 -> {
+                item { MapTab(vm) }
+                if (view.running) {
+                    item { SectionLabel(stringResource(R.string.section_apps_destinations)) }
+                    item { FlowGraph(view) { host, ip -> target = BlockTarget(host ?: ip ?: "?", "", host, ip) } }
                 }
             }
         }
@@ -260,6 +260,29 @@ private fun LazyListScope.lookups(view: NetView, copy: ListCopy, onTap: (NetLook
                 )
             }
             Text(l.type, style = DsType.Mono.copy(color = Ds.Dim))
+        }
+    }
+}
+
+@Composable
+private fun MapTab(vm: MainViewModel) {
+    val map by vm.routeMap.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        DsCard(padding = PaddingValues(8.dp)) { RouteGlobe(map) }
+        Text(stringResource(R.string.map_explainer), style = DsType.Secondary)
+        DsCard {
+            SectionLabel(stringResource(R.string.section_route_trace))
+            Spacer(Modifier.height(6.dp))
+            RouteList(map)
+        }
+        if (map.destinations.isNotEmpty()) {
+            DsCard {
+                SectionLabel(stringResource(R.string.section_destinations))
+                Spacer(Modifier.height(6.dp))
+                DestinationList(map)
+            }
+        } else if (!map.live) {
+            DashedNote(stringResource(R.string.map_not_running))
         }
     }
 }
@@ -434,7 +457,7 @@ private fun BlockDialog(vm: MainViewModel, t: BlockTarget, rules: List<String>, 
 
 @Composable
 private fun Empty(text: Int) {
-    Text(stringResource(text), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
+    DashedNote(stringResource(text))
 }
 
 private fun rate(v: Long?): String = if (v == null) "—" else bytes(v) + "/s"

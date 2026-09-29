@@ -257,6 +257,14 @@
     <string name="toast_blocked">Blocked %1$s</string>
     <string name="toast_unblocked">Unblocked %1$s</string>
 
+    <string name="status_building_tor">Building a Tor circuit…</string>
+    <string name="tab_map">Map</string>
+    <string name="section_route_trace">Route, hop by hop</string>
+    <string name="section_destinations">Where connections went</string>
+    <string name="section_apps_destinations">Apps → destinations</string>
+    <string name="map_explainer">Located on this phone, from a bundled database (IP geolocation by DB-IP): no address you visit is sent anywhere to be placed. Tor shows the circuit it is using now; proxies given by name stay unplaced, since looking them up would leak.</string>
+    <string name="map_sites_see_you_in">Sites see you in %1$s %2$s</string>
+    <string name="map_not_running">Connect to see where your connections go.</string>
     <string name="pool_updating">Updating…</string>
     <string name="scraper_warning_short">Each result passes a verified TLS handshake, so it can\'t read your HTTPS, but it still sees where you connect. Put free proxies after Tor.</string>
     <string name="stop">Stop</string>

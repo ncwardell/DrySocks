@@ -64,6 +64,20 @@ func Stop() {
 	}
 }
 
+// WarmDNS makes one lookup through the running chain, blocking up to 30 s; see
+// vpn.Engine.WarmDNS. A no-op when nothing runs.
+func WarmDNS() error {
+	mu.Lock()
+	e := running
+	mu.Unlock()
+	if e == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return e.WarmDNS(ctx)
+}
+
 // SetBlocklist replaces the blocked domains; domainsJSON is a JSON array. A
 // domain blocks itself and every name under it. Takes effect at once.
 func SetBlocklist(domainsJSON string) error {

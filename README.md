@@ -173,10 +173,25 @@ built-in Tor, the scraper — keeps working: Android exempts a VPN app from its 
 - Nothing here changes what apps say about the device from inside their own encrypted
   connections — user agent, screen size, model. See `docs/design.md`, *Fingerprinting*.
 
+## Map
+
+The Network tab's **Map** draws the route on a wireframe globe — this phone, each proxy, a
+rotating hop's current proxy, Tor's guard, middle and exit — and where connections went, by
+country, with the same route written out hop by hop beneath it. Real traceroute cannot see
+through proxies or Tor; this shows the route traffic actually takes.
+
+Every address is placed on the phone, from a bundled database (DB-IP country lite, CC BY 4.0,
+rebuilt by `tools/geo/fetch.sh`): sending each address you visit to an online geolocation
+service would leak exactly what DrySocks hides. Proxies given by host name are left unplaced,
+since resolving them would itself be a lookup. The phone's own dot comes from its network or
+language settings, not a location permission.
+
 ## Look and licences
 
 The interface follows the design handoff in the brand board: dark-first, one signal colour
 (lime: traffic is going through the chain; coral: exposed, blocked or failed), Geist for the
 interface and Geist Mono for anything a machine reads back. Geist and Geist Mono are bundled
 from Google Fonts under the SIL Open Font License 1.1 (`app/src/main/assets/licenses/`).
+IP geolocation by [DB-IP](https://db-ip.com) (CC BY 4.0); outlines from Natural Earth
+(public domain).
 
