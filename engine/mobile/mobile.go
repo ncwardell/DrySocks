@@ -15,9 +15,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/monitor"
-	"sockschain/engine/vpn"
+	"drysocks/engine/chain"
+	"drysocks/engine/monitor"
+	"drysocks/engine/vpn"
 )
 
 var (

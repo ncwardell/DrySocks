@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"sockschain/engine/chain"
+	"drysocks/engine/chain"
 )
 
 // Target is where a candidate is asked to connect. Cloudflare's trace page

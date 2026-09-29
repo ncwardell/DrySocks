@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.sockschain.app"
+    namespace = "io.github.ncwardell.drysocks"
     // 37.1 because tor-android requires it (its AAR metadata says so). Compiling against
     // it changes nothing at run time; targetSdk below is what opts into new behaviour.
     compileSdk {
@@ -17,7 +17,7 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.sockschain.app"
+        applicationId = "io.github.ncwardell.drysocks"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

@@ -23,8 +23,8 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/tunnel"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel/statistic"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/monitor"
+	"drysocks/engine/chain"
+	"drysocks/engine/monitor"
 )
 
 // Config is what the app sends across, as JSON.

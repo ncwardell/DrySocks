@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/scrape"
+	"drysocks/engine/chain"
+	"drysocks/engine/scrape"
 )
 
 // InspectConfig is what InspectStart takes, as JSON.

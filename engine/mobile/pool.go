@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"sockschain/engine/chain"
+	"drysocks/engine/chain"
 )
 
 // PoolConfig is what SetPool takes, as JSON.

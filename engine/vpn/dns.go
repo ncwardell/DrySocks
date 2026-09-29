@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/monitor"
+	"drysocks/engine/chain"
+	"drysocks/engine/monitor"
 )
 
 // dnsClient carries DNS over TCP through the chain (RFC 7766), because UDP

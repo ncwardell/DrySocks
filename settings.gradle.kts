@@ -20,7 +20,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SocksChain"
+rootProject.name = "DrySocks"
 
 include(":core")
 include(":app")

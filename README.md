@@ -1,4 +1,4 @@
-# SocksChain
+# DrySocks
 
 A modern rebuild of SocksDroid: sends a phone's traffic through a proxy, without root, using
 Android's `VpnService`. Unlike SocksDroid it takes a **chain** of proxies — SOCKS5, SOCKS4a,
@@ -147,18 +147,18 @@ internet can reach the phone. Down is the traffic coming back on connections app
 These are Android's settings, not the app's — only a device-owner app can set them for
 another — so the Home screen shows their state and links to them:
 
-> Settings → Network → VPN → ⚙ next to SocksChain → **Always-on VPN** and
+> Settings → Network → VPN → ⚙ next to DrySocks → **Always-on VPN** and
 > **Block connections without VPN**
 
 With both on, Android starts the chain at boot (after first unlock), and until it is up —
-or with no data connection at all — nothing leaves the phone. SocksChain adds its own
+or with no data connection at all — nothing leaves the phone. DrySocks adds its own
 fail-closed on top: when always-on starts it and the chain cannot come up (a bad profile,
 Orbot missing), it holds a VPN that drops everything and says why, instead of stopping and
 letting traffic out. With always-on but without the block setting, that is the only thing
 standing between a broken chain and a leak.
 
 Lockdown has costs, which the Home screen names for the selected chain: apps left out of the
-chain, and possibly the bypassed LAN, get no network at all. SocksChain itself — hop 1, the
+chain, and possibly the bypassed LAN, get no network at all. DrySocks itself — hop 1, the
 built-in Tor, the scraper — keeps working: Android exempts a VPN app from its own lockdown.
 
 ## Known limits

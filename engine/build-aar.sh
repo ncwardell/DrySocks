@@ -19,7 +19,7 @@ mkdir -p ../app/libs
 gomobile bind \
   -target=android/arm64,android/amd64 \
   -androidapi 26 \
-  -javapkg com.sockschain.engine \
+  -javapkg io.github.ncwardell.drysocks.engine \
   -trimpath \
   -ldflags='-s -w -extldflags=-Wl,-z,max-page-size=16384' \
   -o ../app/libs/engine.aar \

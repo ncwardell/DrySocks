@@ -3,7 +3,7 @@ package mobile
 import (
 	"math/rand/v2"
 
-	"sockschain/engine/scrape"
+	"drysocks/engine/scrape"
 )
 
 func shuffle(c []scrape.Candidate) {

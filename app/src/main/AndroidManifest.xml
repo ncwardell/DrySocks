@@ -23,7 +23,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.SocksChain">
+        android:theme="@style/Theme.DrySocks">
 
         <activity
             android:name=".MainActivity"

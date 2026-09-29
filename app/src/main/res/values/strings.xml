@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SocksChain</string>
+    <string name="app_name">DrySocks</string>
     <string name="channel_vpn">VPN status</string>
 
     <string name="status_stopped">Not connected</string>
@@ -20,7 +20,7 @@
     <string name="protection_off">Off. The VPN starts only when you start it, and traffic goes direct whenever it is down.</string>
     <string name="protection_always_on">Always-on is set: the VPN starts at boot and restarts if it stops. Block connections without VPN is off, so traffic can go direct in the gap before it is up.</string>
     <string name="protection_lockdown">Always-on and Block connections without VPN are both set. Nothing leaves this phone except through the chain, from boot, with or without a data connection.</string>
-    <string name="protection_how">In VPN settings, tap the gear next to SocksChain and turn on Always-on VPN, then Block connections without VPN.</string>
+    <string name="protection_how">In VPN settings, tap the gear next to DrySocks and turn on Always-on VPN, then Block connections without VPN.</string>
     <string name="open_vpn_settings">Open VPN settings</string>
     <string name="lockdown_cost_apps">With Block connections without VPN on, apps left out of the chain get no network at all.</string>
     <string name="lockdown_cost_lan">With Block connections without VPN on, Android may block the local network this chain leaves out.</string>

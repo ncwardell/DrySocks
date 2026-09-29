@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"sockschain/engine/chain"
+	"drysocks/engine/chain"
 )
 
 // Report is what Inspect learns about one proxy: the things a free-proxy list
@@ -285,7 +285,7 @@ func headerEcho(ctx context.Context, c *chain.Chain, addr, path string) ([]strin
 	}
 	host, _, _ := net.SplitHostPort(addr)
 	req, _ := http.NewRequest(http.MethodGet, "http://"+host+path, nil)
-	req.Header.Set("User-Agent", "sockschain-inspect")
+	req.Header.Set("User-Agent", "drysocks-inspect")
 	req.Header.Set("Accept", "application/json")
 	req.Close = true
 	if err := req.Write(conn); err != nil {

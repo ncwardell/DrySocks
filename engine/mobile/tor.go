@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"sockschain/engine/chain"
+	"drysocks/engine/chain"
 )
 
 var upstream *chain.Server

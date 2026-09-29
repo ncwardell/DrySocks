@@ -17,8 +17,8 @@ import (
 
 	M "github.com/xjasonlyu/tun2socks/v2/metadata"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/monitor"
+	"drysocks/engine/chain"
+	"drysocks/engine/monitor"
 )
 
 func listen(t *testing.T, serve func(net.Conn)) string {

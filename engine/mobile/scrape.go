@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"sockschain/engine/chain"
-	"sockschain/engine/scrape"
+	"drysocks/engine/chain"
+	"drysocks/engine/scrape"
 )
 
 // ScrapeListener receives a scrape's progress. gomobile turns it into a Java

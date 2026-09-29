@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"sockschain/engine/chain"
+	"drysocks/engine/chain"
 )
 
 // Source is a URL serving one proxy per line, as ip:port or scheme://ip:port.

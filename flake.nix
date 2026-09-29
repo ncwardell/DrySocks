@@ -1,5 +1,5 @@
 {
-  description = "SocksChain — send a phone's traffic through a chain of SOCKS and HTTP proxies";
+  description = "DrySocks — send a phone's traffic through a chain of SOCKS and HTTP proxies";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -60,11 +60,11 @@
           # `nix develop` — enough for the engine's tests and the :core tests.
           # Deliberately excludes the Android SDK so the shell is cheap to enter.
           default = pkgs.mkShell {
-            name = "sockschain";
+            name = "drysocks";
             packages = commonTools;
 
             shellHook = commonHook + ''
-              echo "SocksChain dev shell"
+              echo "DrySocks dev shell"
               echo "  (cd engine && go test -race ./...)   the chain, DNS and engine"
               echo "  gradle :core:test                     profiles and routes"
               echo
@@ -74,7 +74,7 @@
 
           # `nix develop .#android` — the above plus the SDK and NDK.
           android = androidPkgs.mkShell {
-            name = "sockschain-android";
+            name = "drysocks-android";
             packages = commonTools ++ [
               androidSdk.androidsdk
               androidPkgs.android-tools
@@ -89,7 +89,7 @@
               # copy AGP unpacks from its own artifact, which is not patchelf'd.
               export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/37.0.0/aapt2"
 
-              echo "SocksChain Android shell — SDK at $ANDROID_HOME"
+              echo "DrySocks Android shell — SDK at $ANDROID_HOME"
               echo "  engine/build-aar.sh          the Go engine, into app/libs/engine.aar"
               echo "  gradle :app:assembleDebug    the APK"
             '';
