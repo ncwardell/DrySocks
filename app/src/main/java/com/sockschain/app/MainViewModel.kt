@@ -138,8 +138,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
 
+                // On the engine's threads: nothing may escape, or the process aborts.
                 override fun onResult(resultJSON: String) {
-                    val r = ScrapeResult.parse(resultJSON)
+                    val r = runCatching { ScrapeResult.parse(resultJSON) }.getOrNull() ?: return
                     _scrape.value = _scrape.value.let { st -> st.copy(found = (st.found + r).sortedBy { it.ms }) }
                 }
 
@@ -189,6 +190,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun deletePool(id: String) = viewModelScope.launch { poolStore.delete(id) }
     fun updatePool(id: String, scrape: Boolean = true) = PoolUpdater.updateAsync(getApplication(), id, scrape)
+    fun inspectPool(id: String, urls: List<String>? = null) = PoolUpdater.inspectAsync(getApplication(), id, urls)
     fun cancelPoolUpdate(id: String) = PoolUpdater.cancel(id)
     /** Pausing also stops an update in progress. */
     fun setPaused(id: String, paused: Boolean) = viewModelScope.launch {

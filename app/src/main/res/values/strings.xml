@@ -185,6 +185,12 @@
     <string name="proxy_last_worked">worked %1$s</string>
     <string name="add">Add</string>
 
+    <string name="pool_inspect">Inspect all</string>
+    <string name="pool_inspect_one">Inspect</string>
+    <string name="report_none">Not inspected yet. Inspecting measures which protocols it speaks, which ports it will tunnel to, whether Tor gets through, whether it tampers with plain HTTP, what network it exits from, and its speed — all through this pool\'s route.</string>
+    <string name="report_errors">Why tests failed</string>
+    <string name="close">Close</string>
+
     <string name="test_chain">Test chain</string>
     <string name="exit_ip">Leaves the chain as %1$s</string>
 </resources>

@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -8,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
@@ -239,4 +241,142 @@ func TestCheckAllFiltersAndReportsEverything(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("got %+v, want nothing", got)
 	}
+}
+
+// socks5Dialer is a SOCKS5 proxy that really connects where it is asked, but
+// sends each port to the local server standing in for it.
+func socks5Dialer(t *testing.T, portTo map[string]string, addHeader bool) string {
+	return func() string {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					var b [262]byte
+					io.ReadFull(c, b[:2])
+					io.ReadFull(c, b[:b[1]])
+					c.Write([]byte{5, 0})
+					io.ReadFull(c, b[:4])
+					var port uint16
+					switch b[3] {
+					case 1:
+						io.ReadFull(c, b[:6])
+						port = uint16(b[4])<<8 | uint16(b[5])
+					case 3:
+						io.ReadFull(c, b[:1])
+						n := int(b[0])
+						io.ReadFull(c, b[:n+2])
+						port = uint16(b[n])<<8 | uint16(b[n+1])
+					}
+					to, ok := portTo[fmt.Sprint(port)]
+					if !ok {
+						c.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0}) // not allowed
+						return
+					}
+					c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+					if addHeader && port == 80 {
+						// A tampering proxy: rewrites the request on its way.
+						br := bufio.NewReader(c)
+						req, err := http.ReadRequest(br)
+						if err != nil {
+							return
+						}
+						req.Header.Set("Via", "1.1 snoop")
+						up, err := net.Dial("tcp", to)
+						if err != nil {
+							return
+						}
+						defer up.Close()
+						req.Write(up)
+						io.Copy(c, up)
+						return
+					}
+					splice(c, to)
+				}()
+			}
+		}()
+		return ln.Addr().String()
+	}()
+}
+
+func TestInspectMeasuresWhatAListOnlyClaims(t *testing.T) {
+	trace := traceServer(t)
+
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := map[string]string{}
+		for k := range r.Header {
+			h[k] = r.Header.Get(k)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"headers": h})
+	}))
+	t.Cleanup(echo.Close)
+	quiz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "Port test successful!") }))
+	t.Cleanup(quiz.Close)
+	ipapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"success","countryCode":"NL","isp":"Example Hosting","as":"AS64500 Example","hosting":true,"mobile":false,"proxy":true}`)
+	}))
+	t.Cleanup(ipapi.Close)
+	relay := httptest.NewUnstartedServer(http.NotFoundHandler())
+	relay.TLS = &tls.Config{Certificates: []tls.Certificate{selfSigned(t, "relay.invalid")}}
+	relay.StartTLS()
+	t.Cleanup(relay.Close)
+	big := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(make([]byte, 300<<10)) }))
+	t.Cleanup(big.Close)
+
+	targets := Targets{
+		Trace:         func() Target { tg := target(trace); tg.Addr = "trace.invalid:443"; return tg }(),
+		Plain80:       "echo.invalid:80",
+		HeaderURLPath: "/headers",
+		AnyPort:       "quiz.invalid:8080",
+		IPInfo:        "ipapi.invalid:81",
+		TorRelays:     []string{"relay.invalid:9001"},
+		Speed:         Target{Host: "example.com", Addr: "speed.invalid:444", Roots: srvRoots(big)},
+		SpeedPath:     "/",
+	}
+	everywhere := map[string]string{
+		"443": trace.Listener.Addr().String(), "80": echo.Listener.Addr().String(),
+		"8080": quiz.Listener.Addr().String(), "81": ipapi.Listener.Addr().String(),
+		"9001": relay.Listener.Addr().String(), "444": big.Listener.Addr().String(),
+	}
+
+	t.Run("an open, honest proxy", func(t *testing.T) {
+		p := socks5Dialer(t, everywhere, false)
+		r := Inspect(context.Background(), "socks5://"+p, nil, targets)
+		if !r.Web443 || !r.Web80 || !r.AnyPort || !r.Tor || r.Tampers || r.KBps == 0 {
+			t.Errorf("report %+v", r)
+		}
+		if len(r.Protocols) != 1 || r.Protocols[0] != "socks5" || r.NeedsAuth {
+			t.Errorf("protocols %v auth %v", r.Protocols, r.NeedsAuth)
+		}
+		if r.Country != "NL" || !r.Hosting || !r.Flagged || r.ISP != "Example Hosting" {
+			t.Errorf("network %+v", r)
+		}
+	})
+
+	t.Run("web ports only, and tampering", func(t *testing.T) {
+		webOnly := map[string]string{"443": everywhere["443"], "80": everywhere["80"], "81": everywhere["81"], "444": everywhere["444"]}
+		p := socks5Dialer(t, webOnly, true)
+		r := Inspect(context.Background(), "socks5://"+p, nil, targets)
+		if !r.Web443 || !r.Web80 || r.AnyPort || r.Tor {
+			t.Errorf("ports: %+v", r)
+		}
+		if !r.Tampers || len(r.AddedHeaders) != 1 || r.AddedHeaders[0] != "Via" {
+			t.Errorf("tampering: %v %v", r.Tampers, r.AddedHeaders)
+		}
+		if r.Errors["anyport"] == "" || r.Errors["tor"] == "" {
+			t.Errorf("errors should say why: %v", r.Errors)
+		}
+	})
+}
+
+func srvRoots(s *httptest.Server) *x509.CertPool {
+	return s.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 }

@@ -6,7 +6,9 @@ import com.sockschain.core.PoolState
 import com.sockschain.core.Profile
 import com.sockschain.core.ScrapeResult
 import com.sockschain.core.ScrapeVia
+import com.sockschain.core.ProxyReport
 import com.sockschain.core.checkConfig
+import com.sockschain.core.inspectConfig
 import com.sockschain.core.scrapeConfig
 import com.sockschain.engine.mobile.Mobile
 import com.sockschain.engine.mobile.ScrapeListener
@@ -47,10 +49,14 @@ object Pools {
             val found = mutableListOf<ScrapeResult>()
             Mobile.scrapeStart(session, config, object : ScrapeListener {
                 override fun onFetched(candidates: Long, summaryJSON: String) {}
+                // Callbacks run on the engine's threads: an exception here would abort the
+                // process, not just this result, so nothing may escape them.
                 override fun onResult(resultJSON: String) {
-                    synchronized(found) { found += ScrapeResult.parse(resultJSON) }
+                    runCatching { ScrapeResult.parse(resultJSON) }.onSuccess { synchronized(found) { found += it } }
                 }
-                override fun onProgress(tested: Long, total: Long, found: Long) = onProgress(tested.toInt(), total.toInt())
+                override fun onProgress(tested: Long, total: Long, found: Long) {
+                    runCatching { onProgress(tested.toInt(), total.toInt()) }
+                }
                 override fun onDone(error: String) {
                     if (cont.isActive) cont.resume(synchronized(found) { found.toList() })
                 }
@@ -120,6 +126,55 @@ object PoolUpdater {
         }
     }
 
+    /**
+     * Inspects every proxy in the pool (or just [urls]) through the pool's route: which
+     * protocols it speaks, which ports it tunnels to, whether Tor gets through, whether
+     * it tampers, what network it exits from, how fast it is.
+     */
+    suspend fun inspect(context: Context, poolId: String, urls: List<String>? = null) {
+        val app = context.applicationContext
+        val lock = locks.getOrPut(poolId) { Mutex() }
+        if (!lock.tryLock()) return
+        val holder = "pool-$poolId"
+        val store = PoolStore(app)
+        try {
+            val pool = store.get(poolId) ?: return
+            val targets = urls ?: pool.proxies.map { it.url }
+            if (targets.isEmpty()) return
+            step(poolId, "Preparing the route")
+            val via = Via.resolve(app, pool.update.via, holder)
+            step(poolId, "Inspecting", 0, targets.size)
+            val reports = mutableListOf<ProxyReport>()
+            suspendCancellableCoroutine { cont ->
+                Mobile.inspectStart("$holder-inspect", inspectConfig(targets, via), object : ScrapeListener {
+                    override fun onFetched(candidates: Long, summaryJSON: String) {}
+                    override fun onResult(resultJSON: String) {
+                        runCatching { ProxyReport.parse(resultJSON) }.onSuccess { synchronized(reports) { reports += it } }
+                    }
+                    override fun onProgress(tested: Long, total: Long, found: Long) {
+                        runCatching { step(poolId, "Inspecting", tested.toInt(), total.toInt()) }
+                    }
+                    override fun onDone(error: String) {
+                        if (cont.isActive) cont.resume(Unit)
+                    }
+                })
+                cont.invokeOnCancellation { Mobile.scrapeCancel("$holder-inspect") }
+            }
+            store.update(poolId) { it.withReports(synchronized(reports) { reports.toList() }, System.currentTimeMillis()) }
+        } catch (e: Exception) {
+            store.update(poolId) { it.copy(lastError = e.message ?: e.toString()) }
+        } finally {
+            Via.release(app, holder)
+            _progress.value = _progress.value - poolId
+            lock.unlock()
+        }
+    }
+
+    fun inspectAsync(context: Context, poolId: String, urls: List<String>? = null) {
+        val app = context.applicationContext
+        scope.launch { inspect(app, poolId, urls) }
+    }
+
     fun updateAsync(context: Context, poolId: String, scrape: Boolean = true) {
         val app = context.applicationContext
         scope.launch { update(app, poolId, scrape) }
@@ -128,6 +183,7 @@ object PoolUpdater {
     fun cancel(poolId: String) {
         Mobile.scrapeCancel("pool-$poolId-check")
         Mobile.scrapeCancel("pool-$poolId-scrape")
+        Mobile.scrapeCancel("pool-$poolId-inspect")
     }
 
     /** While the VPN runs: every minute, update the automatic pools that are due. */

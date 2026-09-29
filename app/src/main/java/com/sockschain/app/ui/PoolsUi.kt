@@ -176,6 +176,10 @@ private fun PoolDetailScreen(vm: MainViewModel, id: String, onDone: () -> Unit) 
     var countries by remember(id) { mutableStateOf(saved.update.countries.joinToString(", ")) }
     var pasting by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf<PoolProxy?>(null) }
+    details?.let { px ->
+        ReportDialog(saved.proxies.firstOrNull { it.url == px.url } ?: px, onInspect = { vm.inspectPool(id, listOf(px.url)) }, onDismiss = { details = null })
+    }
 
     val draftUpdate = u.copy(countries = countries.split(',', ' ').map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet())
     val draft = saved.copy(name = name, update = draftUpdate)
@@ -287,6 +291,9 @@ private fun PoolDetailScreen(vm: MainViewModel, id: String, onDone: () -> Unit) 
                         OutlinedButton(onClick = { vm.updatePool(id, scrape = false) }, enabled = !dirty && saved.proxies.isNotEmpty()) {
                             Text(stringResource(R.string.pool_check_only))
                         }
+                        OutlinedButton(onClick = { vm.inspectPool(id) }, enabled = !dirty && saved.proxies.isNotEmpty()) {
+                            Text(stringResource(R.string.pool_inspect))
+                        }
                     }
                     OutlinedButton(onClick = { pasting = true }) { Text(stringResource(R.string.pool_paste)) }
                     OutlinedButton(
@@ -312,7 +319,7 @@ private fun PoolDetailScreen(vm: MainViewModel, id: String, onDone: () -> Unit) 
                 )
             }
             items(saved.proxies.sortedWith(compareByDescending<PoolProxy> { it.working }.thenBy { it.unchecked }.thenBy { it.ms }), key = { it.url }) { px ->
-                ProxyRow(px, u, onRemove = { vm.removeProxy(id, px.url) })
+                ProxyRow(px, u, onRemove = { vm.removeProxy(id, px.url) }, onOpen = { details = px })
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             }
         }
@@ -320,8 +327,8 @@ private fun PoolDetailScreen(vm: MainViewModel, id: String, onDone: () -> Unit) 
 }
 
 @Composable
-private fun ProxyRow(px: PoolProxy, u: PoolUpdate, onRemove: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun ProxyRow(px: PoolProxy, u: PoolUpdate, onRemove: () -> Unit, onOpen: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(px.url, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -343,9 +350,71 @@ private fun ProxyRow(px: PoolProxy, u: PoolUpdate, onRemove: () -> Unit) {
                     else -> MaterialTheme.colorScheme.error
                 },
             )
+            px.report?.let { r ->
+                val warn = listOfNotNull(
+                    "tampers".takeIf { r.tampers },
+                    "needs login".takeIf { r.needsAuth },
+                    "flagged".takeIf { r.flagged },
+                )
+                Text(
+                    buildList {
+                        if (r.protocols.isNotEmpty()) add(r.protocols.joinToString("·"))
+                        add(if (r.anyPort) "any port" else if (r.web443 || r.web80) "web ports only" else "no tunnels")
+                        if (r.tor) add("Tor ✓")
+                        if (r.network != "unknown") add(r.network)
+                        if (r.kbps > 0) add("${r.kbps} KB/s")
+                    }.joinToString("  ·  "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                if (warn.isNotEmpty()) {
+                    Text("⚠ " + warn.joinToString(", "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
         IconButton(onClick = onRemove) { Icon(Icons.Default.Close, stringResource(R.string.remove)) }
     }
+}
+
+@Composable
+private fun ReportDialog(px: PoolProxy, onInspect: () -> Unit, onDismiss: () -> Unit) {
+    val r = px.report
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(px.url, style = MaterialTheme.typography.titleSmall, fontFamily = FontFamily.Monospace) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (r == null) {
+                    Text(stringResource(R.string.report_none))
+                } else {
+                    @Composable
+                    fun line(label: String, value: String, bad: Boolean = false) = Row {
+                        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(120.dp))
+                        Text(value, style = MaterialTheme.typography.bodySmall, color = if (bad) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    }
+                    fun yes(b: Boolean) = if (b) "yes" else "no"
+                    line("Speaks", r.protocols.joinToString(", ").ifEmpty { "nothing it would admit to" })
+                    line("Needs a login", yes(r.needsAuth), r.needsAuth)
+                    line("Port 443", yes(r.web443), !r.web443)
+                    line("Port 80", yes(r.web80))
+                    line("Any port", yes(r.anyPort))
+                    line("Tor", if (r.tor) "gets through" else "blocked or failed")
+                    line("Tampering", if (r.tampers) "adds " + r.addedHeaders.joinToString() else if (r.web80) "none seen" else "not tested", r.tampers)
+                    line("Exits as", listOfNotNull(r.exitIp, r.country).joinToString("  ").ifEmpty { "—" })
+                    line("Network", listOfNotNull(r.network, r.isp).joinToString(" — "))
+                    line("Listed as proxy", yes(r.flagged), r.flagged)
+                    line("Speed", if (r.kbps > 0) "${r.kbps} KB/s" else "—")
+                    line("Inspected", ago(px.inspectedAt))
+                    if (r.errors.isNotEmpty()) {
+                        Text(stringResource(R.string.report_errors), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                        r.errors.forEach { (k, v) -> Text("$k: $v", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onInspect(); onDismiss() }) { Text(stringResource(R.string.pool_inspect_one)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+    )
 }
 
 @Composable

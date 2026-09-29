@@ -49,6 +49,30 @@ class PoolTest {
     }
 
     @Test
+    fun `inspection reports land on their proxies`() {
+        val raw = """{"url":"http://a:1","protocols":["socks5","http"],"web443":true,"anyPort":true,"tor":true,
+            "addedHeaders":["Via"],"tampers":true,"country":"MX","isp":"Telmex","hosting":false,"kbps":420,
+            "errors":{"80":"i/o timeout"}}"""
+        val r = ProxyReport.parse(raw)
+        assertThat(r.network).isEqualTo("residential")
+        val p = ProxyPool("p").add(listOf("http://a:1", "http://b:1"), now = 1).withReports(listOf(r), now = 9)
+        assertThat(p.proxies.first { it.url == "http://a:1" }.report).isEqualTo(r)
+        assertThat(p.proxies.first { it.url == "http://a:1" }.inspectedAt).isEqualTo(9)
+        assertThat(p.proxies.first { it.url == "http://b:1" }.report).isNull()
+        // A later check keeps the report.
+        val checked = p.merge(listOf(ok("http://a:1", 50)), now = 10)
+        assertThat(checked.proxies.first { it.url == "http://a:1" }.report).isEqualTo(r)
+    }
+
+    @Test
+    fun `go's null lists read as empty`() {
+        val r = ProxyReport.parse("""{"url":"socks5://a:1","protocols":null,"addedHeaders":null,"errors":null}""")
+        assertThat(r.protocols).isEmpty()
+        assertThat(r.errors).isEmpty()
+        assertThat(NetSnapshot.parse("""{"active":null,"recent":null,"dns":null}""").active).isEmpty()
+    }
+
+    @Test
     fun `old rotating hops become pools`() {
         val old = Hop(HopKind.ROTATING, id = "h1", pool = listOf("socks5://a:1"), refill = true, refillVia = ScrapeVia.TOR)
         val (profiles, pools) = migrateRotatingHops(listOf(Profile(id = "x", name = "Mine", hops = listOf(old))), emptyList(), now = 5)

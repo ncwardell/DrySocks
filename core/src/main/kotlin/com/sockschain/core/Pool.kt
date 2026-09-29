@@ -52,6 +52,9 @@ data class PoolProxy(
     val country: String? = null,
     /** Failed checks since it last passed. */
     val fails: Int = 0,
+    /** The last deep inspection, and when; see [ProxyReport]. */
+    val report: ProxyReport? = null,
+    val inspectedAt: Long = 0,
 ) {
     val protocol: String get() = url.substringBefore("://")
     val working: Boolean get() = lastOk > 0 && fails == 0
@@ -101,6 +104,12 @@ data class ProxyPool(
             }
         }
         return copy(proxies = byUrl.values.filter { it.fails < update.pruneAfter }.toList())
+    }
+
+    /** Stores inspection reports against the proxies they describe. */
+    fun withReports(reports: List<ProxyReport>, now: Long): ProxyPool {
+        val byUrl = reports.associateBy { it.url }
+        return copy(proxies = proxies.map { p -> byUrl[p.url]?.let { p.copy(report = it, inspectedAt = now) } ?: p })
     }
 
     fun withoutDead(): ProxyPool = copy(proxies = proxies.filter { it.working || it.unchecked })

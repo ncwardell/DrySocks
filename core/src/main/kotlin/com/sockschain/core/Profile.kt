@@ -215,4 +215,8 @@ data class ProbeResult(
 @Serializable
 data class ProbeStep(val to: String, val ms: Long)
 
-val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+/**
+ * One Json for everything the engine sends. Go writes an empty list as null, so a null
+ * for a field with a default takes the default instead of failing the whole message.
+ */
+val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; coerceInputValues = true }
