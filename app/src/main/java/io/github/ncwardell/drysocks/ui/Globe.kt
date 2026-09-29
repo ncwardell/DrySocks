@@ -20,6 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -65,7 +71,10 @@ import kotlin.math.sqrt
 @Composable
 fun RouteGlobe(map: RouteMap, modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
-    val land = remember { runCatching { Geo.land(ctx) }.getOrDefault(emptyList()) }
+    // Read off the main thread: the first read unpacks the whole geo database.
+    val land by produceState(emptyList<FloatArray>(), ctx) {
+        value = withContext(Dispatchers.IO) { runCatching { Geo.land(ctx) }.getOrDefault(emptyList()) }
+    }
     val measurer = rememberTextMeasurer()
 
     val placed = map.route.filter { it.country != null }
@@ -127,9 +136,12 @@ fun RouteGlobe(map: RouteMap, modifier: Modifier = Modifier) {
             if (exitAt != null && exitAt.code != d.country.code) {
                 arc(view, exitAt, d.country, Ds.Bone.copy(alpha = 0.22f), 1.dp.toPx(), lift = 0.08f)
             }
+            // Small rings, not discs: they mark where traffic went, and must not outshout
+            // the route itself.
             view.point(d.country.lon, d.country.lat)?.let {
-                val size = 3.dp.toPx() + 4.dp.toPx() * sqrt(d.bytes.toFloat() / maxBytes)
-                drawCircle(Ds.Bone.copy(alpha = 0.85f), size, it)
+                val radius = 2.dp.toPx() + 2.dp.toPx() * sqrt(d.bytes.toFloat() / maxBytes)
+                drawCircle(Ds.Ink, radius, it)
+                drawCircle(Ds.Muted, radius, it, style = Stroke(1.5.dp.toPx()))
             }
         }
 
@@ -141,10 +153,14 @@ fun RouteGlobe(map: RouteMap, modifier: Modifier = Modifier) {
             if (a.code == b.code) continue
             arc(view, a, b, routeColor, 2.dp.toPx(), lift = 0.16f, pulseAt = if (map.live) t else null)
         }
-        placed.forEachIndexed { i, node ->
-            val p = view.point(node.country!!.lon, node.country.lat) ?: return@forEachIndexed
-            val isPhone = node.role == MapNode.Role.PHONE
-            val last = i == placed.lastIndex
+        // Stops in one country share a dot and one label ("This phone · Tor guard"), and a
+        // label that would still land on another is pushed below it.
+        val taken = mutableListOf<Rect>()
+        placed.withIndex().groupBy { it.value.country!!.code }.values.forEach { group ->
+            val node = group.first().value
+            val p = view.point(node.country!!.lon, node.country.lat) ?: return@forEach
+            val isPhone = group.all { it.value.role == MapNode.Role.PHONE }
+            val last = group.any { it.index == placed.lastIndex }
             if (last && map.live) {
                 drawCircle(Ds.Lime.copy(alpha = 0.25f), 9.dp.toPx(), p)
                 drawCircle(Ds.Lime, 5.dp.toPx(), p)
@@ -153,11 +169,19 @@ fun RouteGlobe(map: RouteMap, modifier: Modifier = Modifier) {
                 drawCircle(if (isPhone) Ds.Muted else routeColor, 5.dp.toPx(), p, style = Stroke(2.dp.toPx()))
             }
             val label = measurer.measure(
-                "${flag(node.country.code)} ${node.label}",
+                "${flag(node.country.code)} ${group.joinToString(" · ") { it.value.label }}",
                 TextStyle(color = Ds.Bone, fontSize = 11.sp, fontFamily = Geist),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
+                constraints = Constraints(maxWidth = (size.width - p.x - 12.dp.toPx()).toInt().coerceAtLeast(1)),
             )
-            drawText(label, topLeft = Offset(p.x + 8.dp.toPx(), p.y - label.size.height - 2.dp.toPx()))
+            var box = Rect(Offset(p.x + 8.dp.toPx(), p.y - label.size.height - 2.dp.toPx()), label.size.toSize())
+            repeat(6) {
+                val hit = taken.firstOrNull { it.overlaps(box) } ?: return@repeat
+                box = box.translate(0f, hit.bottom - box.top + 2.dp.toPx())
+            }
+            taken += box
+            drawRect(Ds.Ink.copy(alpha = 0.6f), box.topLeft, box.size)
+            drawText(label, topLeft = box.topLeft)
         }
     }
 }

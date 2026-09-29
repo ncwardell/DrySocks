@@ -42,12 +42,20 @@ class RouteMapper(context: Context) {
             profile?.hops?.forEach { h ->
                 when (h.kind) {
                     HopKind.TOR -> {
-                        val relays = if (running) TorController.circuit() else emptyList()
+                        val relays = if (running) TorController.circuit(exitIp) else emptyList()
                         if (relays.size == 3) {
                             val roles = listOf(MapNode.Role.TOR_GUARD, MapNode.Role.TOR_MIDDLE, MapNode.Role.TOR_EXIT)
                             val names = listOf("Tor guard", "Tor middle", "Tor exit")
                             relays.forEachIndexed { i, r ->
-                                add(MapNode(roles[i], names[i], "${r.nickname} · ${r.address}", Geo.locate(app, r.address)))
+                                // Where sites see the phone beats the relay Tor lists: circuits
+                                // differ per stream, and many exits leave from another address.
+                                val seen = exitIp.takeIf { i == 2 && h == profile.hops.last() && it != r.address }
+                                val node = if (seen != null) {
+                                    MapNode(roles[i], names[i], "$seen · as sites see it", Geo.locate(app, seen))
+                                } else {
+                                    MapNode(roles[i], names[i], "${r.nickname} · ${r.address}", Geo.locate(app, r.address))
+                                }
+                                add(node)
                             }
                         } else {
                             add(MapNode(MapNode.Role.TOR, "Tor", if (running) "building a circuit" else "3 relays, chosen on connect", null))
@@ -56,8 +64,10 @@ class RouteMapper(context: Context) {
                     HopKind.ROTATING -> {
                         val pool = pools.firstOrNull { it.id == h.poolId }
                         val current = if (running) Pools.state(h.id).current else null
-                        val host = current?.substringAfter("://")?.substringBeforeLast(':')
-                        add(MapNode(MapNode.Role.ROTATING, pool?.name ?: "Rotating", current?.substringAfter("://") ?: "rotates on connect", host?.let { Geo.locate(app, it) }))
+                        // Never the proxy's password: just host:port.
+                        val addr = current?.substringAfter("://")?.substringAfterLast('@')
+                        val host = addr?.substringBeforeLast(':')
+                        add(MapNode(MapNode.Role.ROTATING, pool?.name ?: "Rotating", addr ?: "rotates on connect", host?.let { Geo.locate(app, it) }))
                     }
                     else -> add(MapNode(MapNode.Role.PROXY, h.host, "${h.kind.scheme} · ${h.port}", Geo.locate(app, h.host)))
                 }

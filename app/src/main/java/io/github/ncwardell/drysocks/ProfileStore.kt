@@ -41,14 +41,14 @@ class ProfileStore(context: Context) {
     suspend fun get(id: String): Profile? = decode(store.data.first()[PROFILES]).firstOrNull { it.id == id }
 
     suspend fun save(profile: Profile) = store.edit { prefs ->
-        val all = decode(prefs[PROFILES])
+        val all = decodeStrict(prefs[PROFILES])
         val i = all.indexOfFirst { it.id == profile.id }
         prefs[PROFILES] = encode(if (i < 0) all + profile else all.toMutableList().also { it[i] = profile })
         if (prefs[SELECTED] == null) prefs[SELECTED] = profile.id
     }
 
     suspend fun delete(id: String) = store.edit { prefs ->
-        val rest = decode(prefs[PROFILES]).filter { it.id != id }
+        val rest = decodeStrict(prefs[PROFILES]).filter { it.id != id }
         prefs[PROFILES] = encode(rest)
         if (prefs[SELECTED] == id) {
             rest.firstOrNull()?.let { prefs[SELECTED] = it.id } ?: prefs.remove(SELECTED)
@@ -62,8 +62,15 @@ class ProfileStore(context: Context) {
         val SELECTED = stringPreferencesKey("selected")
         val serializer = ListSerializer(Profile.serializer())
 
-        fun decode(s: String?): List<Profile> =
-            if (s == null) emptyList() else runCatching { json.decodeFromString(serializer, s) }.getOrDefault(emptyList())
+        /** For reading: unreadable data shows as no chains. */
+        fun decode(s: String?): List<Profile> = runCatching { decodeStrict(s) }.getOrDefault(emptyList())
+
+        /**
+         * For writing: throws rather than let a save over unreadable data (from a newer
+         * version, say) replace every chain with just the one being saved.
+         */
+        fun decodeStrict(s: String?): List<Profile> =
+            if (s == null) emptyList() else json.decodeFromString(serializer, s)
                 .map { if (it.dns == Profile.OLD_DEFAULT_DNS) it.copy(dns = Profile.DEFAULT_DNS) else it }
 
         fun encode(list: List<Profile>) = json.encodeToString(serializer, list)

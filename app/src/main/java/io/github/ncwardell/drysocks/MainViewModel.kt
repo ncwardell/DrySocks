@@ -16,7 +16,10 @@ import io.github.ncwardell.drysocks.core.Profile
 import io.github.ncwardell.drysocks.core.ProxyPool
 import io.github.ncwardell.drysocks.core.ProbeResult
 import io.github.ncwardell.drysocks.engine.mobile.Mobile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -54,6 +57,7 @@ data class ScrapeState(
 private const val PROBE_HOLDER = "probe"
 private const val SCRAPE_HOLDER = "scrape"
 private const val SCRAPE_SESSION = "user"
+private const val EXIT_RECHECK_MS = 5 * 60_000L
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ProfileStore(app)
@@ -103,10 +107,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val raw = withContext(Dispatchers.IO) { Mobile.probe(draft.engineConfig(ChainVpnService.MTU, torPort)) }
                 ProbeResult.parse(raw)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 ProbeResult(error = e.message ?: e.toString())
             } finally {
-                TorController.release(app, PROBE_HOLDER)
+                withContext(NonCancellable) { TorController.release(app, PROBE_HOLDER) }
             }
             _probe.value = Probe.Done(result)
         }
@@ -132,12 +138,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startScrape(want: Int, via: String) {
         val app = getApplication<Application>()
         _scrape.value = ScrapeState(phase = ScrapePhase.Preparing, via = via)
-        viewModelScope.launch {
+        preparing = viewModelScope.launch {
             val hops = try {
                 Via.resolve(app, via, SCRAPE_HOLDER)
             } catch (e: Exception) {
-                Via.release(app, SCRAPE_HOLDER)
-                _scrape.value = _scrape.value.copy(phase = ScrapePhase.Done, error = e.message)
+                withContext(NonCancellable) { Via.release(app, SCRAPE_HOLDER) }
+                val stopped = e is CancellationException
+                _scrape.value = _scrape.value.copy(phase = ScrapePhase.Done, error = if (stopped) null else e.message)
+                if (stopped) throw e
                 return@launch
             }
             _scrape.value = _scrape.value.copy(phase = ScrapePhase.Fetching)
@@ -215,7 +223,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         poolStore.update(id) { p -> p.copy(proxies = p.proxies.filter { it.url != url }) }
     }
 
-    fun cancelScrape() = Mobile.scrapeCancel(SCRAPE_SESSION)
+    /** Getting the route ready (Tor, a chain's pools) before the engine is handed the scrape. */
+    private var preparing: Job? = null
+
+    fun cancelScrape() {
+        preparing?.cancel()
+        Mobile.scrapeCancel(SCRAPE_SESSION)
+    }
 
     /** Appends [hop] to an existing chain, or starts a new one with it. */
     fun addHop(hop: Hop, toProfile: Profile?) = viewModelScope.launch {
@@ -230,6 +244,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Exit address --------------------------------------------------------------------
 
+    // Declared before the init block below, which may assign it straight away.
+    private var exitJob: Job? = null
+
     private val _exit = MutableStateFlow<String?>(null)
     /** Where sites see this phone, learned once per connection through the running chain. */
     val exit: StateFlow<String?> = _exit.asStateFlow()
@@ -240,7 +257,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             ChainVpnService.status.collect { s ->
-                if (s is VpnStatus.Running) learnExit() else {
+                exitJob?.cancel()
+                if (s is VpnStatus.Running) exitJob = learnExit() else {
                     _exit.value = null
                     _exitCountry.value = null
                 }
@@ -252,16 +270,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // asking, every 15 s, for as long as the VPN runs.
     private fun learnExit() = viewModelScope.launch {
         val app = getApplication<Application>()
-        repeat(40) { attempt ->
+        for (attempt in 0 until 40) {
             delay(if (attempt == 0) 1_500 else 15_000)
             if (ChainVpnService.status.value !is VpnStatus.Running) return@launch
-            val p = store.selected() ?: return@launch
+            val p = runningProfile() ?: return@launch
             val torPort = when (val t = TorController.status.value) {
                 is TorStatus.On -> t.socksPort
                 is TorStatus.Starting -> t.socksPort
                 else -> null
             }
-            if (p.usesTor && torPort == null) return@repeat
+            if (p.usesTor && torPort == null) continue
             val ip = runCatching {
                 Pools.sync(app, p)
                 withContext(Dispatchers.IO) { ProbeResult.parse(Mobile.probe(p.engineConfig(ChainVpnService.MTU, torPort))) }.exitIp
@@ -269,10 +287,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (ip != null) {
                 _exitCountry.value = withContext(Dispatchers.IO) { Geo.locate(app, ip) }
                 _exit.value = ip
-                return@launch
+                break
             }
         }
+        // Tor moves new streams to a fresh circuit every ten minutes, and a rotating hop
+        // moves on too: look again now and then, so "sites see" stays true.
+        while (ChainVpnService.status.value is VpnStatus.Running && _exit.value != null) {
+            delay(EXIT_RECHECK_MS)
+            val p = runningProfile() ?: return@launch
+            val torPort = (TorController.status.value as? TorStatus.On)?.socksPort
+            if (p.usesTor && torPort == null) continue
+            val ip = runCatching {
+                Pools.sync(app, p)
+                withContext(Dispatchers.IO) { ProbeResult.parse(Mobile.probe(p.engineConfig(ChainVpnService.MTU, torPort))) }.exitIp
+            }.getOrNull() ?: continue
+            if (ChainVpnService.status.value !is VpnStatus.Running) return@launch
+            _exitCountry.value = withContext(Dispatchers.IO) { Geo.locate(app, ip) }
+            _exit.value = ip
+        }
     }
+
+    private fun runningId(): String? = when (val s = ChainVpnService.status.value) {
+        is VpnStatus.Running -> s.profileId
+        is VpnStatus.Connecting -> s.profileId
+        else -> null
+    }
+
+    private suspend fun runningProfile(): Profile? = runningId()?.let { store.get(it) }
 
     // --- Network view ------------------------------------------------------------------
 
@@ -291,7 +332,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * view updates, and only while the map is on screen.
      */
     val routeMap: StateFlow<RouteMap> = combine(network, profiles, pools, selectedId, exit) { n, ps, pl, sel, ex ->
-        val p = ps.firstOrNull { it.id == (sel ?: ps.firstOrNull()?.id) }
+        // The chain actually running, when one is; otherwise the one that would.
+        val shown = runningId() ?: sel ?: ps.firstOrNull()?.id
+        val p = ps.firstOrNull { it.id == shown }
         mapper.map(p, pl, n.snapshot, ChainVpnService.status.value is VpnStatus.Running, ex)
     }.flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.WhileSubscribed(2_000), RouteMap())
 

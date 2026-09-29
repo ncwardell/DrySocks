@@ -35,7 +35,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -68,6 +72,7 @@ import io.github.ncwardell.drysocks.core.Hop
 import io.github.ncwardell.drysocks.core.HopKind
 import io.github.ncwardell.drysocks.core.PoolState
 import io.github.ncwardell.drysocks.core.Profile
+import io.github.ncwardell.drysocks.core.json
 import io.github.ncwardell.drysocks.core.ProxyPool
 import io.github.ncwardell.drysocks.core.RotationMode
 import kotlinx.coroutines.delay
@@ -77,6 +82,11 @@ import kotlinx.coroutines.launch
  * The editor for the selected chain. There is no Save: changes are written a moment
  * after the last keystroke, and take effect on the next connect.
  */
+private val ProfileSaver = Saver<Profile, String>(
+    save = { json.encodeToString(Profile.serializer(), it) },
+    restore = { json.decodeFromString(Profile.serializer(), it) },
+)
+
 @Composable
 fun ChainsScreen(vm: MainViewModel) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
@@ -93,13 +103,20 @@ fun ChainsScreen(vm: MainViewModel) {
         return
     }
 
-    // The draft follows the chain being edited; switching chains starts a new one.
-    var draft by remember(saved.id) { mutableStateOf(saved) }
+    // The draft follows the chain being edited; switching chains starts a new one. It
+    // survives rotation, which would otherwise bring back the stored copy mid-save.
+    var draft by rememberSaveable(saved.id, stateSaver = ProfileSaver) { mutableStateOf(saved) }
     LaunchedEffect(draft) {
         if (draft != saved) {
             delay(400)
             vm.save(draft)
         }
+    }
+    // Leaving the chain (another tab, another chain) inside the 400 ms saves it now.
+    val latest by rememberUpdatedState(draft)
+    val stored by rememberUpdatedState(saved)
+    DisposableEffect(saved.id) {
+        onDispose { if (latest.id == stored.id && latest != stored) vm.save(latest) }
     }
     var picking by remember { mutableStateOf(false) }
     var editingDns by remember { mutableStateOf(false) }

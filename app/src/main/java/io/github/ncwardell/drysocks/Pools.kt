@@ -15,6 +15,9 @@ import io.github.ncwardell.drysocks.engine.mobile.ScrapeListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -117,12 +120,18 @@ object PoolUpdater {
             }
             store.update(poolId) { it.copy(lastUpdated = System.currentTimeMillis(), lastError = null) }
             resyncEngine(app)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             store.update(poolId) { it.copy(lastUpdated = System.currentTimeMillis(), lastError = e.message ?: e.toString()) }
         } finally {
-            Via.release(app, holder)
-            _progress.value = _progress.value - poolId
-            lock.unlock()
+            // Unlocked last and whatever happens, or the pool could never update again.
+            try {
+                withContext(NonCancellable) { Via.release(app, holder) }
+            } finally {
+                _progress.value = _progress.value - poolId
+                lock.unlock()
+            }
         }
     }
 
@@ -161,12 +170,18 @@ object PoolUpdater {
                 cont.invokeOnCancellation { Mobile.scrapeCancel("$holder-inspect") }
             }
             store.update(poolId) { it.withReports(synchronized(reports) { reports.toList() }, System.currentTimeMillis()) }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             store.update(poolId) { it.copy(lastError = e.message ?: e.toString()) }
         } finally {
-            Via.release(app, holder)
-            _progress.value = _progress.value - poolId
-            lock.unlock()
+            // Unlocked last and whatever happens, or the pool could never update again.
+            try {
+                withContext(NonCancellable) { Via.release(app, holder) }
+            } finally {
+                _progress.value = _progress.value - poolId
+                lock.unlock()
+            }
         }
     }
 
@@ -222,10 +237,14 @@ object PoolUpdater {
         }
     }
 
+    /** Hands fresh pools to the chain the VPN is running, if it is running one. */
     suspend fun resyncEngine(context: Context) {
-        if (ChainVpnService.status.value is VpnStatus.Running) {
-            ProfileStore(context).selected()?.let { Pools.sync(context, it) }
+        val id = when (val s = ChainVpnService.status.value) {
+            is VpnStatus.Running -> s.profileId
+            is VpnStatus.Connecting -> s.profileId
+            else -> return
         }
+        ProfileStore(context).get(id)?.let { Pools.sync(context, it) }
     }
 
     private fun step(id: String, what: String, done: Int = 0, of: Int = 0) {

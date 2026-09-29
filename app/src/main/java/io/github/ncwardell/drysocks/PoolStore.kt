@@ -47,7 +47,8 @@ class PoolStore(context: Context) {
     suspend fun delete(id: String) = modify { all -> all.filter { it.id != id } }
 
     private suspend fun modify(change: (List<ProxyPool>) -> List<ProxyPool>) {
-        store.edit { it[KEY] = ProxyPool.encodeList(change(decode(it[KEY]))) }
+        // Parsed strictly: unreadable pools are left alone, not replaced by an empty list.
+        store.edit { it[KEY] = ProxyPool.encodeList(change(it[KEY]?.let(ProxyPool::parseList).orEmpty())) }
         BackgroundUpdates.schedule(app, all())
     }
 

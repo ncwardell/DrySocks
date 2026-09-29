@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import org.json.JSONObject
 import org.torproject.jni.TorService
 
 sealed interface TorStatus {
@@ -61,30 +62,42 @@ object TorController {
      * Makes sure Tor runs with [before] as its upstream (empty: Tor dials directly) and
      * returns its SOCKS port. [holder] names the caller, so one release does not stop
      * Tor under another.
-     */
-    /**
+     *
      * With [adopt], a Tor already running is used as it is, whatever its upstream: for
-     * scrapes, which want *a* Tor and must not re-route the one the VPN is using.
+     * scrapes, which want *a* Tor. Only the [owner] (the VPN) may re-route a Tor that
+     * someone else is holding; anyone else asking for a different route is refused
+     * rather than allowed to move the VPN's traffic.
      */
-    suspend fun start(context: Context, holder: String, before: List<Hop> = emptyList(), adopt: Boolean = false): Int = lock.withLock {
-        holders += holder
+    suspend fun start(
+        context: Context, holder: String, before: List<Hop> = emptyList(),
+        adopt: Boolean = false, owner: Boolean = false,
+    ): Int = lock.withLock {
         val app = context.applicationContext
+        val others = holders - holder
 
         if (adopt && service != null) {
             // Leave the upstream alone.
         } else if (service == null) {
             upstream = before
-            writeTorrc(app, upstreamLine(before))
+            writeTorrc(app, upstreamConf(before))
             bind(app)
         } else if (upstream != before) {
+            if (!owner && others.isNotEmpty()) {
+                error("Tor is in use by the running chain with a different route before it; stop it to test this one")
+            }
             // Change Tor's upstream in place; restarting Tor inside one process is the
             // part of tor-android least worth depending on.
             val ctl = service?.torControlConnection
                 ?: error("Tor is still starting; try again in a moment")
-            val line = upstreamLine(before)
-            if (line == null) ctl.resetConf(listOf("Socks5Proxy")) else ctl.setConf("Socks5Proxy", line)
+            // DisableNetwork closes the relay connections Tor made the old way, so
+            // nothing keeps flowing along the route just left.
+            ctl.setConf("DisableNetwork", "1")
+            val conf = upstreamConf(before)
+            if (conf == null) ctl.resetConf(UPSTREAM_KEYS) else ctl.setConf(conf)
+            ctl.setConf("DisableNetwork", "0")
             upstream = before
         }
+        holders += holder
 
         withTimeoutOrNull(60_000) {
             status.first { it is TorStatus.On || (it is TorStatus.Starting && it.socksPort != null) || it is TorStatus.Failed }
@@ -102,24 +115,30 @@ object TorController {
     data class Relay(val nickname: String, val address: String)
 
     /**
-     * The relays of the newest built general-purpose circuit, guard first: where traffic
-     * through Tor is actually going. Empty when Tor is not running or has no circuit yet.
-     * Streams may use other circuits too; this is a representative one, not every one.
+     * The relays of a built general-purpose circuit, guard first: the one exiting from
+     * [exitIp] if there is one, else the newest. Empty when Tor is not running or has no
+     * circuit yet. Streams may use other circuits too; this is a representative one.
      */
-    fun circuit(): List<Relay> {
+    fun circuit(exitIp: String? = null): List<Relay> {
         val svc = service ?: return emptyList()
         val status = runCatching { svc.getInfo("circuit-status") }.getOrNull() ?: return emptyList()
         // "5 BUILT $FP~nick,$FP~nick,$FP~nick BUILD_FLAGS=... PURPOSE=GENERAL ..."
-        val line = status.lines().lastOrNull { " BUILT " in it && "PURPOSE=GENERAL" in it } ?: return emptyList()
-        val path = line.split(' ').getOrNull(2) ?: return emptyList()
-        return path.split(',').mapNotNull { hop ->
-            val fp = hop.removePrefix("$").substringBefore('~').substringBefore('=')
-            val nick = hop.substringAfter('~', hop.substringAfter('=', "relay"))
-            // "r nick id digest published-date time IP ORPort DirPort"
-            val ns = runCatching { svc.getInfo("ns/id/$fp") }.getOrNull() ?: return@mapNotNull null
-            val r = ns.lines().firstOrNull { it.startsWith("r ") }?.split(' ') ?: return@mapNotNull null
-            r.getOrNull(6)?.let { Relay(nick, it) }
-        }
+        val built = status.lines().filter { " BUILT " in it && "PURPOSE=GENERAL" in it }
+            .mapNotNull { it.split(' ').getOrNull(2) }
+            .map { path -> path.split(',').mapNotNull { relay(svc, it) } }
+            .filter { it.size == 3 }
+        // The circuit sites actually saw, when the exit address is known: its exit relay
+        // is almost always the address they see. Otherwise the newest.
+        return built.lastOrNull { exitIp != null && it.last().address == exitIp } ?: built.lastOrNull().orEmpty()
+    }
+
+    private fun relay(svc: TorService, hop: String): Relay? {
+        val fp = hop.removePrefix("$").substringBefore('~').substringBefore('=')
+        val nick = hop.substringAfter('~', hop.substringAfter('=', "relay"))
+        // "r nick id digest published-date time IP ORPort DirPort"
+        val ns = runCatching { svc.getInfo("ns/id/$fp") }.getOrNull() ?: return null
+        val r = ns.lines().firstOrNull { it.startsWith("r ") }?.split(' ') ?: return null
+        return r.getOrNull(6)?.let { Relay(nick, it) }
     }
 
     /** Waits until Tor has built a circuit; false on timeout. For tests of the chain. */
@@ -144,23 +163,33 @@ object TorController {
         _status.value = TorStatus.Off
     }
 
-    /** Null when Tor dials directly; otherwise its Socks5Proxy value, served by the engine. */
-    private fun upstreamLine(before: List<Hop>): String? {
+    /**
+     * Null when Tor dials directly; otherwise the settings pointing it at the engine's
+     * local SOCKS server for [before], which wants the password it was started with.
+     */
+    private fun upstreamConf(before: List<Hop>): Map<String, String>? {
         if (before.isEmpty()) {
             Mobile.stopUpstream()
             return null
         }
         val urls = json.encodeToString(ListSerializer(String.serializer()), before.map { it.toUrl() })
-        val port = Mobile.startUpstream(urls)
-        return "127.0.0.1:$port"
+        // {"port":…,"user":…,"pass":…}: the engine's server takes only this password.
+        val up = JSONObject(Mobile.startUpstream(urls))
+        return linkedMapOf(
+            "Socks5Proxy" to "127.0.0.1:${up.getInt("port")}",
+            "Socks5ProxyUsername" to up.getString("user"),
+            "Socks5ProxyPassword" to up.getString("pass"),
+        )
     }
 
-    private fun writeTorrc(context: Context, socks5Proxy: String?) {
+    private val UPSTREAM_KEYS = listOf("Socks5Proxy", "Socks5ProxyUsername", "Socks5ProxyPassword")
+
+    private fun writeTorrc(context: Context, upstream: Map<String, String>?) {
         // TorService adds SOCKSPort auto, the control socket and the data directory itself.
         val lines = buildList {
             add("ClientOnly 1")
             add("AvoidDiskWrites 1")
-            socks5Proxy?.let { add("Socks5Proxy $it") }
+            upstream?.forEach { (k, v) -> add("$k $v") }
         }
         TorService.getTorrc(context).writeText(lines.joinToString("\n", postfix = "\n"))
     }

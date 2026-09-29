@@ -35,8 +35,9 @@ import java.net.InetAddress
 
 sealed interface VpnStatus {
     data object Stopped : VpnStatus
-    data class Connecting(val profile: String) : VpnStatus
-    data class Running(val profile: String) : VpnStatus
+    /** [profileId] is the chain actually starting or running, whatever is selected since. */
+    data class Connecting(val profile: String, val profileId: String) : VpnStatus
+    data class Running(val profile: String, val profileId: String) : VpnStatus
     data class Failed(val reason: String) : VpnStatus
 
     /** The chain could not start, and all traffic is being dropped instead of leaking. */
@@ -96,7 +97,11 @@ class ChainVpnService : VpnService() {
     /** Started by always-on VPN, at boot or after a crash, rather than by the user. */
     private var startedBySystem = false
 
+    /** The newest start request; stopping with it cannot stop a service asked to start since. */
+    @Volatile private var lastStartId = 0
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         if (intent?.action == ACTION_STOP) {
             scope.launch { lock.withLock { teardown(VpnStatus.Stopped) } }
             return START_NOT_STICKY
@@ -179,14 +184,14 @@ class ChainVpnService : VpnService() {
         runCatching { PoolStore.migrate(this) }
         runCatching { Pools.sync(this, profile) }
         profile.problem()?.let { return it }
-        _status.value = VpnStatus.Connecting(profile.name)
+        _status.value = VpnStatus.Connecting(profile.name, profile.id)
 
         // Tor runs in this process, so like the app it is outside the tunnel and exempt
         // from lockdown. The engine starts as soon as Tor's SOCKS port is open; Tor holds
         // connections until it has a circuit, and the engine waits up to 30 s for them.
         val torPort = if (profile.usesTor) {
             try {
-                TorController.start(this, TOR_HOLDER, profile.hopsBeforeTor)
+                TorController.start(this, TOR_HOLDER, profile.hopsBeforeTor, owner = true)
             } catch (e: Exception) {
                 return e.message ?: e.toString()
             }
@@ -218,16 +223,23 @@ class ChainVpnService : VpnService() {
         if (profile.usesTor) {
             notify(getString(R.string.status_building_tor))
             scope.launch {
-                TorController.awaitCircuit(180_000)
+                if (!TorController.awaitCircuit(180_000)) {
+                    lock.withLock {
+                        if (engineUp && _status.value is VpnStatus.Connecting) {
+                            giveUp("Tor could not build a circuit in three minutes; its relays may be blocked on this network")
+                        }
+                    }
+                    return@launch
+                }
                 runCatching { Mobile.warmDNS() }
                 lock.withLock {
-                    if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile.name)
+                    if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile)
                 }
             }
         } else {
             scope.launch {
                 runCatching { Mobile.warmDNS() }
-                lock.withLock { if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile.name) }
+                lock.withLock { if (engineUp && _status.value is VpnStatus.Connecting) markRunning(profile) }
             }
         }
         ticker = scope.launch {
@@ -239,9 +251,23 @@ class ChainVpnService : VpnService() {
         return null
     }
 
-    private fun markRunning(name: String) {
-        _status.value = VpnStatus.Running(name)
-        notify(getString(R.string.status_running, name))
+    private fun markRunning(profile: Profile) {
+        _status.value = VpnStatus.Running(profile.name, profile.id)
+        notify(getString(R.string.status_running, profile.name))
+    }
+
+    /** The engine came up but the chain never worked. Call with [lock] held. */
+    private fun giveUp(reason: String) {
+        if (!failClosed()) {
+            teardown(VpnStatus.Failed(reason))
+            return
+        }
+        ticker?.cancel()
+        PoolUpdater.stopAuto()
+        Mobile.stop()
+        engineUp = false
+        TorController.releaseAsync(this, TOR_HOLDER)
+        holdBlackhole(reason)
     }
 
     private fun builderFor(profile: Profile): Builder {
@@ -303,7 +329,7 @@ class ChainVpnService : VpnService() {
         _status.value = final
         _protection.value = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        stopSelf(lastStartId)
     }
 
     override fun onRevoke() {

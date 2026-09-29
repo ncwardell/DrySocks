@@ -2,6 +2,8 @@ package io.github.ncwardell.drysocks
 
 import android.content.Context
 import java.io.DataInputStream
+import android.net.InetAddresses
+import android.os.Build
 import java.net.InetAddress
 
 /** A country as the map uses it: where to put its dot, and what to call it. */
@@ -65,7 +67,16 @@ object Geo {
         return best.takeIf { it >= 0 }
     }
 
-    private fun looksLikeIp(s: String) = s.isNotEmpty() && (s.all { it.isDigit() || it == '.' } || ':' in s)
+    /**
+     * True only for numeric addresses, so the lookup below can never become a DNS query:
+     * "host:port" or a name would otherwise be resolved, outside the tunnel.
+     */
+    private fun looksLikeIp(s: String): Boolean {
+        val parts = s.split('.')
+        if (':' !in s) return parts.size == 4 && parts.all { p -> p.length in 1..3 && p.all { it.isDigit() } && p.toInt() <= 255 }
+        if (Build.VERSION.SDK_INT >= 29) return runCatching { InetAddresses.parseNumericAddress(s) }.isSuccess
+        return s.count { it == ':' } >= 2 && s.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' }
+    }
 
     private fun load(context: Context): Data = data ?: synchronized(this) {
         data ?: read(context.applicationContext).also { data = it }

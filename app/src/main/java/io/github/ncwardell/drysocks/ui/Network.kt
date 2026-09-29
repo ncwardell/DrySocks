@@ -268,7 +268,10 @@ private fun LazyListScope.lookups(view: NetView, copy: ListCopy, onTap: (NetLook
 private fun MapTab(vm: MainViewModel) {
     val map by vm.routeMap.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        DsCard(padding = PaddingValues(8.dp)) { RouteGlobe(map) }
+        DsCard(padding = PaddingValues(8.dp)) {
+            RouteGlobe(map)
+            GlobeLegend()
+        }
         Text(stringResource(R.string.map_explainer), style = DsType.Secondary)
         DsCard {
             SectionLabel(stringResource(R.string.section_route_trace))
@@ -467,4 +470,29 @@ fun bytes(n: Long): String = when {
     n < 1024 * 1024 -> "%.1f KB".format(n / 1024.0)
     n < 1024L * 1024 * 1024 -> "%.1f MB".format(n / 1024.0 / 1024)
     else -> "%.2f GB".format(n / 1024.0 / 1024 / 1024)
+}
+
+/** What the marks on the globe mean; without it the destination rings read as noise. */
+@Composable
+private fun GlobeLegend() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LegendMark(stringResource(R.string.map_legend_route)) {
+            drawLine(Ds.Lime, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx())
+        }
+        LegendMark(stringResource(R.string.map_legend_destination)) {
+            drawCircle(Ds.Muted, 3.dp.toPx(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+        }
+    }
+}
+
+@Composable
+private fun LegendMark(label: String, mark: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        androidx.compose.foundation.Canvas(Modifier.size(14.dp), onDraw = mark)
+        Text(label, style = DsType.MonoSmall.copy(color = Ds.Muted))
+    }
 }

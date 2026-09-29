@@ -35,8 +35,11 @@ object BackgroundUpdates {
 
 class PoolWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        // Connected, the VPN service updates every automatic pool itself.
-        if (ChainVpnService.status.value is VpnStatus.Running) return Result.success()
+        // Connected, the VPN service updates every automatic pool itself. Connecting or
+        // failing closed, this app's own traffic is outside the VPN and would go straight
+        // out, which is exactly what the user asked not to happen.
+        val s = ChainVpnService.status.value
+        if (s !is VpnStatus.Stopped && s !is VpnStatus.Failed) return Result.success()
         PoolStore.migrate(applicationContext)
         PoolUpdater.runDue(applicationContext, backgroundOnly = true)
         return Result.success()

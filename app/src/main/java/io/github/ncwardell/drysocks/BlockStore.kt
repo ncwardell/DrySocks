@@ -40,7 +40,8 @@ class BlockStore(context: Context) {
 
     private suspend fun edit(change: (List<String>) -> List<String>) {
         store.edit { p ->
-            val now = p[KEY]?.let { runCatching { BlockRules.decode(it) }.getOrNull() } ?: emptyList()
+            // Strict: a blocklist that cannot be read must not be replaced by one rule.
+            val now = p[KEY]?.let { BlockRules.decode(it) } ?: emptyList()
             p[KEY] = BlockRules.encode(change(now))
         }
         push()
