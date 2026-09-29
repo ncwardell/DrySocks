@@ -52,11 +52,16 @@ const maxListBytes = 16 << 20
 func Fetch(ctx context.Context, sources []Source, via *chain.Chain) FetchResult {
 	client := &http.Client{Timeout: 30 * time.Second}
 	if via != nil && len(via.Hops) > 0 {
-		client.Transport = &http.Transport{
+		tr := &http.Transport{
+			// net/http strips the request's deadline from the dial's context.
 			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
 				return via.DialContext(ctx, addr)
 			},
 		}
+		client.Transport = tr
+		defer tr.CloseIdleConnections()
 	}
 
 	lists := make([][]Candidate, len(sources))

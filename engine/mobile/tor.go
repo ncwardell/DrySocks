@@ -10,20 +10,26 @@ import (
 
 var upstream *chain.Server
 
+// Upstream is where Tor's Socks5Proxy points, and the credentials it must use.
+type Upstream struct {
+	Port int    `json:"port"`
+	User string `json:"user"`
+	Pass string `json:"pass"`
+}
+
 // StartUpstream serves SOCKS5 on 127.0.0.1 through the hops in hopsJSON (a
-// JSON array of hop URLs) and returns the port. Tor's Socks5Proxy points
-// here when the user's chain has hops before Tor.
-func StartUpstream(hopsJSON string) (int, error) {
+// JSON array of hop URLs) and returns an Upstream, as JSON, for Tor's torrc.
+func StartUpstream(hopsJSON string) (string, error) {
 	var raws []string
 	if err := json.Unmarshal([]byte(hopsJSON), &raws); err != nil {
-		return 0, err
+		return "", err
 	}
 	hops, err := chain.ParseHops(raws)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	if len(hops) == 0 {
-		return 0, errors.New("upstream needs at least one hop")
+		return "", errors.New("upstream needs at least one hop")
 	}
 
 	mu.Lock()
@@ -32,7 +38,12 @@ func StartUpstream(hopsJSON string) (int, error) {
 		upstream.Close()
 	}
 	upstream = &chain.Server{Chain: &chain.Chain{Hops: hops}, DialTimeout: 30 * time.Second}
-	return upstream.Listen()
+	port, err := upstream.Listen()
+	if err != nil {
+		return "", err
+	}
+	b, _ := json.Marshal(Upstream{port, upstream.User, upstream.Pass})
+	return string(b), nil
 }
 
 // StopUpstream is safe to call when nothing is serving.

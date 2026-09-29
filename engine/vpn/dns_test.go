@@ -280,3 +280,41 @@ func TestCachedExchangeFallsBackToStale(t *testing.T) {
 		t.Fatalf("got %v, %v; want the stale answer", resp, err)
 	}
 }
+
+func TestAMovedDeadlineIsNoticedDuringARead(t *testing.T) {
+	pc := newDNSPacketConn(newDNSClient(&chain.Chain{}, "1.1.1.1:53", nil))
+	defer pc.Close()
+	pc.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := pc.ReadFrom(make([]byte, 64))
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	pc.SetReadDeadline(time.Now().Add(time.Second)) // as tun2socks does, mid-read
+	time.Sleep(200 * time.Millisecond)              // past the old deadline
+	pc.answers <- answer{[]byte("late"), &net.UDPAddr{}}
+	if err := <-done; err != nil {
+		t.Fatalf("read ended with %v at the old deadline; the extension was missed", err)
+	}
+}
+
+func TestCacheKeepsOnlyCleanAnswersToTheQuestionAsked(t *testing.T) {
+	c := newDNSCache()
+	asked := dnsQuery(t, 1, "asked.example.")
+	other := dnsQuery(t, 1, "other.example.")
+	c.put(asked, dnsAnswer(t, other, 300)) // an answer to some other question
+	if c.get(asked, true) != nil {
+		t.Error("cached an answer to a different question")
+	}
+	tr := dnsAnswer(t, asked, 300)
+	tr[2] |= 0x02 // TC: truncated
+	c.put(asked, tr)
+	if c.get(asked, true) != nil {
+		t.Error("cached a truncated answer")
+	}
+	c.put(asked, dnsAnswer(t, asked, 300))
+	if c.get(asked, false) == nil {
+		t.Error("did not cache a clean answer")
+	}
+}

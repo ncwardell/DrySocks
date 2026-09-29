@@ -296,7 +296,13 @@ func TestServerChainsForTor(t *testing.T) {
 	}
 	defer s.Close()
 
-	client := &Chain{Hops: mustHops(t, "socks5://127.0.0.1:"+strconv.Itoa(port))}
+	// Without the session's credentials: refused.
+	anon := &Chain{Hops: mustHops(t, "socks5://127.0.0.1:"+strconv.Itoa(port))}
+	if _, err := anon.DialContext(context.Background(), echo); err == nil {
+		t.Fatal("the upstream let a client in without its password")
+	}
+
+	client := &Chain{Hops: mustHops(t, "socks5://"+s.User+":"+s.Pass+"@127.0.0.1:"+strconv.Itoa(port))}
 	conn, err := client.DialContext(context.Background(), echo)
 	if err != nil {
 		t.Fatal(err)
@@ -314,9 +320,30 @@ func TestServerRefusesWhenTheChainIsDown(t *testing.T) {
 	}
 	defer s.Close()
 
-	client := &Chain{Hops: mustHops(t, "socks5://127.0.0.1:"+strconv.Itoa(port))}
+	client := &Chain{Hops: mustHops(t, "socks5://"+s.User+":"+s.Pass+"@127.0.0.1:"+strconv.Itoa(port))}
 	if _, err := client.DialContext(context.Background(), "example.com:80"); err == nil ||
 		!strings.Contains(err.Error(), "refused") {
 		t.Fatalf("err = %v, want a refusal", err)
+	}
+}
+
+func TestServerClosesItsTunnels(t *testing.T) {
+	s := &Server{Chain: &Chain{Hops: mustHops(t, "socks5://"+socks5Server(t, "", ""))}}
+	port, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Chain{Hops: mustHops(t, "socks5://"+s.User+":"+s.Pass+"@127.0.0.1:"+strconv.Itoa(port))}
+	conn, err := client.DialContext(context.Background(), echoServer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	roundTrip(t, conn)
+
+	s.Close()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("a tunnel stayed open after the upstream was closed")
 	}
 }

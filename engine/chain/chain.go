@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 )
@@ -86,20 +87,25 @@ func (c *Chain) dial(ctx context.Context, target string, onStep func(Step)) (net
 		if err == nil {
 			return conn, nil
 		}
-		blame := -1
+		// Blame: the hop whose own handshake broke, or — when it answered but could not
+		// reach what came next — the next hop. The target is nobody's pool's fault, and
+		// a caller giving up is nobody's fault at all.
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		blame := failedAt
+		var ne *nextError
 		switch {
 		case failedAt < 0:
 			blame = 0 // the TCP connect to the first hop
-		case c.Hops[failedAt].Kind == Rotating:
-			blame = failedAt
-		case failedAt+1 < len(c.Hops) && c.Hops[failedAt+1].Kind == Rotating:
-			blame = failedAt + 1 // the hop before could not reach it
+		case errors.As(err, &ne):
+			blame = failedAt + 1 // == len(c.Hops) when it was the target
 		}
-		if blame < 0 || c.Hops[blame].Kind != Rotating {
+		if blame >= len(c.Hops) || c.Hops[blame].Kind != Rotating {
 			return nil, err
 		}
 		c.Hops[blame].Pool.Failed(hops[blame].Addr)
-		if attempt >= maxAttempts-1 || ctx.Err() != nil {
+		if attempt >= maxAttempts-1 {
 			return nil, err
 		}
 		if onStep != nil {

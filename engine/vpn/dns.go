@@ -48,7 +48,12 @@ func newDNSClient(c *chain.Chain, server string, mon *monitor.Monitor) *dnsClien
 		d.doh = &http.Client{
 			Timeout: dnsTimeout,
 			Transport: &http.Transport{
+				// net/http dials with a context stripped of the request's deadline, so
+				// the dial gets its own: a proxy that accepts and then goes silent must
+				// not hold a lookup, and a goroutine, forever.
 				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+					ctx, cancel := context.WithTimeout(ctx, dnsTimeout)
+					defer cancel()
 					return c.DialContext(ctx, addr)
 				},
 				ForceAttemptHTTP2:   true, // one tunnel, many lookups
@@ -219,6 +224,7 @@ type dnsPacketConn struct {
 
 	mu       sync.Mutex
 	deadline time.Time
+	moved    chan struct{} // closed, and replaced, whenever the deadline changes
 }
 
 type answer struct {
@@ -228,7 +234,7 @@ type answer struct {
 
 func newDNSPacketConn(c *dnsClient) *dnsPacketConn {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &dnsPacketConn{client: c, answers: make(chan answer, 8), ctx: ctx, cancel: cancel}
+	return &dnsPacketConn{client: c, answers: make(chan answer, 8), ctx: ctx, cancel: cancel, moved: make(chan struct{})}
 }
 
 func (p *dnsPacketConn) WriteTo(b []byte, to net.Addr) (int, error) {
@@ -251,24 +257,42 @@ func (p *dnsPacketConn) WriteTo(b []byte, to net.Addr) (int, error) {
 	return len(b), nil
 }
 
+// ReadFrom waits for an answer until the read deadline, which tun2socks moves forward
+// from another goroutine while this one is blocked; a move is noticed, not missed.
 func (p *dnsPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
-	p.mu.Lock()
-	dl := p.deadline
-	p.mu.Unlock()
+	for {
+		p.mu.Lock()
+		dl, moved := p.deadline, p.moved
+		p.mu.Unlock()
 
-	var timeout <-chan time.Time
-	if !dl.IsZero() {
-		t := time.NewTimer(time.Until(dl))
-		defer t.Stop()
-		timeout = t.C
+		var timeout <-chan time.Time
+		var t *time.Timer
+		if !dl.IsZero() {
+			d := time.Until(dl)
+			if d <= 0 {
+				return 0, nil, os.ErrDeadlineExceeded
+			}
+			t = time.NewTimer(d)
+			timeout = t.C
+		}
+		select {
+		case a := <-p.answers:
+			stop(t)
+			return copy(b, a.msg), a.from, nil
+		case <-timeout:
+			return 0, nil, os.ErrDeadlineExceeded
+		case <-p.ctx.Done():
+			stop(t)
+			return 0, nil, net.ErrClosed
+		case <-moved:
+			stop(t) // look again, at the new deadline
+		}
 	}
-	select {
-	case a := <-p.answers:
-		return copy(b, a.msg), a.from, nil
-	case <-timeout:
-		return 0, nil, os.ErrDeadlineExceeded
-	case <-p.ctx.Done():
-		return 0, nil, net.ErrClosed
+}
+
+func stop(t *time.Timer) {
+	if t != nil {
+		t.Stop()
 	}
 }
 
@@ -278,11 +302,11 @@ func (p *dnsPacketConn) LocalAddr() net.Addr { return &net.UDPAddr{} }
 
 func (p *dnsPacketConn) SetDeadline(t time.Time) error { return p.SetReadDeadline(t) }
 
-// SetReadDeadline takes effect on the next ReadFrom, which is how tun2socks
-// uses it: it re-arms the deadline before every read.
 func (p *dnsPacketConn) SetReadDeadline(t time.Time) error {
 	p.mu.Lock()
 	p.deadline = t
+	close(p.moved)
+	p.moved = make(chan struct{})
 	p.mu.Unlock()
 	return nil
 }

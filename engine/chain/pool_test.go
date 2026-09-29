@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"io"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -240,5 +241,91 @@ func TestScatteredPicksPerConnection(t *testing.T) {
 	}
 	if s := p.Status(); s.Current != "" {
 		t.Errorf("scattered has no single current proxy, status says %q", s.Current)
+	}
+}
+
+// honestSocks5 dials the target first and reports the outcome, as a real proxy does:
+// 0x05 "connection refused" when the target is not there.
+func honestSocks5(t *testing.T) string {
+	return listen(t, func(c net.Conn) {
+		var b [262]byte
+		io.ReadFull(c, b[:2])
+		io.ReadFull(c, b[:b[1]])
+		c.Write([]byte{5, 0})
+		io.ReadFull(c, b[:4])
+		var host string
+		switch b[3] {
+		case 1:
+			io.ReadFull(c, b[:4])
+			host = net.IP(b[:4]).String()
+		case 3:
+			io.ReadFull(c, b[:1])
+			n := int(b[0])
+			io.ReadFull(c, b[:n])
+			host = string(b[:n])
+		}
+		io.ReadFull(c, b[:2])
+		target := net.JoinHostPort(host, strconv.Itoa(int(b[0])<<8|int(b[1])))
+		up, err := net.DialTimeout("tcp", target, time.Second)
+		if err != nil {
+			c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
+			return
+		}
+		defer up.Close()
+		c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+		go io.Copy(up, c)
+		io.Copy(c, up)
+	})
+}
+
+// closedAddr is an address nothing listens on.
+func closedAddr(t *testing.T) string {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := ln.Addr().String()
+	ln.Close()
+	return a
+}
+
+func TestADeadTargetBenchesNoProxy(t *testing.T) {
+	name := "t-dead-target-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	p := PoolNamed(name)
+	p.Set(hopsAt(honestSocks5(t), honestSocks5(t), honestSocks5(t)), Sequential, 0)
+	if _, err := (&Chain{Hops: mustHops(t, "rotate://"+name)}).DialContext(context.Background(), closedAddr(t)); err == nil {
+		t.Fatal("dialled a closed port")
+	}
+	if s := p.Status(); s.Healthy != 3 {
+		t.Fatalf("healthy %d of 3: a refused target benched proxies that answered correctly", s.Healthy)
+	}
+}
+
+func TestTheRightPoolTakesTheBlame(t *testing.T) {
+	a := "t-a-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := "t-b-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	PoolNamed(a).Set(hopsAt(honestSocks5(t)), Sequential, 0)
+	dead := closedAddr(t)
+	PoolNamed(b).Set(hopsAt(dead), Sequential, 0)
+
+	(&Chain{Hops: mustHops(t, "rotate://"+a, "rotate://"+b)}).DialContext(context.Background(), echoServer(t))
+	if s := PoolNamed(a).Status(); s.Healthy != 1 {
+		t.Errorf("pool A healthy %d of 1: blamed for B's dead proxy", s.Healthy)
+	}
+	if s := PoolNamed(b).Status(); s.Healthy != 0 {
+		t.Errorf("pool B healthy %d of 1: its dead proxy was not benched", s.Healthy)
+	}
+}
+
+func TestGivingUpBenchesNothing(t *testing.T) {
+	slow := listen(t, func(c net.Conn) { time.Sleep(3 * time.Second) })
+	name := "t-cancel-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	p := PoolNamed(name)
+	p.Set(hopsAt(slow), Sequential, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	(&Chain{Hops: mustHops(t, "rotate://"+name)}).DialContext(ctx, "example.com:80")
+	if s := p.Status(); s.Healthy != 1 {
+		t.Fatalf("healthy %d: the caller's deadline benched the proxy", s.Healthy)
 	}
 }

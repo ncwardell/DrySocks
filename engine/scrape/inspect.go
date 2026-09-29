@@ -439,9 +439,13 @@ func speed(ctx context.Context, c *chain.Chain, t Target, path string) (int64, e
 func TorRelays(ctx context.Context, via []chain.Hop) ([]string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	if len(via) > 0 {
-		client.Transport = &http.Transport{DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+		tr := &http.Transport{DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
 			return (&chain.Chain{Hops: via}).DialContext(ctx, addr)
 		}}
+		client.Transport = tr
+		defer tr.CloseIdleConnections()
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://onionoo.torproject.org/details?type=relay&running=true&flag=Guard&order=-consensus_weight&limit=20&fields=or_addresses", nil)

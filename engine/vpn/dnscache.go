@@ -31,7 +31,8 @@ const (
 
 func newDNSCache() *dnsCache { return &dnsCache{m: map[string]cached{}} }
 
-// key is the question, lower-cased: name, type and class.
+// questionKey identifies a query: its name (lower-cased), type and class, plus the flags
+// that change what a correct answer contains: CD, and DO from the EDNS record.
 func questionKey(query []byte) (string, uint16, bool) {
 	var p dnsmessage.Parser
 	h, err := p.Start(query)
@@ -42,7 +43,45 @@ func questionKey(query []byte) (string, uint16, bool) {
 	if err != nil {
 		return "", 0, false
 	}
-	return strings.ToLower(q.Name.String()) + "|" + q.Type.String() + "|" + q.Class.String(), h.ID, true
+	do := false
+	if p.SkipAllQuestions() == nil && p.SkipAllAnswers() == nil && p.SkipAllAuthorities() == nil {
+		for {
+			ah, err := p.AdditionalHeader()
+			if err != nil {
+				break
+			}
+			if ah.Type == dnsmessage.TypeOPT && ah.TTL&0x8000 != 0 {
+				do = true
+			}
+			if p.SkipAdditional() != nil {
+				break
+			}
+		}
+	}
+	key := strings.ToLower(q.Name.String()) + "|" + q.Type.String() + "|" + q.Class.String()
+	if h.CheckingDisabled {
+		key += "|cd"
+	}
+	if do {
+		key += "|do"
+	}
+	return key, h.ID, true
+}
+
+// answers reports whether resp is an answer to exactly the question in query.
+func answers(query, resp []byte) bool {
+	var pq, pr dnsmessage.Parser
+	if _, err := pq.Start(query); err != nil {
+		return false
+	}
+	hr, err := pr.Start(resp)
+	if err != nil || !hr.Response || hr.Truncated {
+		return false
+	}
+	q, err1 := pq.Question()
+	r, err2 := pr.Question()
+	return err1 == nil && err2 == nil && r.Type == q.Type && r.Class == q.Class &&
+		strings.EqualFold(r.Name.String(), q.Name.String())
 }
 
 // get returns a fresh answer for query, with the query's ID. With stale, an expired
@@ -70,8 +109,8 @@ func (c *dnsCache) get(query []byte, stale bool) []byte {
 // put stores a successful answer for the smallest TTL in it, within the floor and ceiling.
 func (c *dnsCache) put(query, resp []byte) {
 	key, _, ok := questionKey(query)
-	if !ok {
-		return
+	if !ok || !answers(query, resp) {
+		return // a truncated answer, or one to some other question, is not kept
 	}
 	var p dnsmessage.Parser
 	h, err := p.Start(resp)
